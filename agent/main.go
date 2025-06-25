@@ -34,11 +34,15 @@ const keyPath = "/etc/wireguard/meshgate.key"
 // ------------- env helpers ---------------------------------------------------
 
 func cpURL() string {
-	if u := os.Getenv("CONTROL_PLANE"); u != "" { return strings.TrimRight(u, "/") }
+	if u := os.Getenv("CONTROL_PLANE"); u != "" {
+		return strings.TrimRight(u, "/")
+	}
 	return "http://localhost:8080"
 }
 func token() string {
-	if t := os.Getenv("NODE_TOKEN"); t != "" { return t }
+	if t := os.Getenv("NODE_TOKEN"); t != "" {
+		return t
+	}
 	return "meshgate-secret"
 }
 
@@ -65,7 +69,9 @@ func ensureKeys() (priv, pub string) {
 func call(method, path string, body []byte) (*http.Response, error) {
 	req, _ := http.NewRequest(method, cpURL()+path, bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+token())
-	if body != nil { req.Header.Set("Content-Type", "application/json") }
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	return http.DefaultClient.Do(req)
 }
 
@@ -74,18 +80,26 @@ func call(method, path string, body []byte) (*http.Response, error) {
 func register(pub string) Node {
 	b, _ := json.Marshal(map[string]string{"publicKey": pub})
 	resp, err := call("POST", "/register", b)
-	if err != nil { log.Fatalf("register: %v", err) }
+	if err != nil {
+		log.Fatalf("register: %v", err)
+	}
 	defer resp.Body.Close()
 	var n Node
-	if err := json.NewDecoder(resp.Body).Decode(&n); err != nil { log.Fatalf("decode reg: %v", err) }
+	if err := json.NewDecoder(resp.Body).Decode(&n); err != nil {
+		log.Fatalf("decode reg: %v", err)
+	}
 	return n
 }
 func fetchCfg(id string) Config {
 	resp, err := call("GET", "/config/"+id, nil)
-	if err != nil { log.Fatalf("config: %v", err) }
+	if err != nil {
+		log.Fatalf("config: %v", err)
+	}
 	defer resp.Body.Close()
 	var c Config
-	if err := json.NewDecoder(resp.Body).Decode(&c); err != nil { log.Fatalf("decode cfg: %v", err) }
+	if err := json.NewDecoder(resp.Body).Decode(&c); err != nil {
+		log.Fatalf("decode cfg: %v", err)
+	}
 	return c
 }
 func hb(id string) {
@@ -108,8 +122,12 @@ func apply(cfg Config) error {
 	}
 	for _, p := range cfg.Peers {
 		args := []string{"set", "wg0", "peer", p.PublicKey}
-		for _, ip := range p.AllowedIPs { args = append(args, "allowed-ips", ip) }
-		if err := exec.Command("wg", args...).Run(); err != nil { return err }
+		for _, ip := range p.AllowedIPs {
+			args = append(args, "allowed-ips", ip)
+		}
+		if err := exec.Command("wg", args...).Run(); err != nil {
+			return err
+		}
 	}
 	return exec.Command("ip", "link", "set", "up", "wg0").Run()
 }
@@ -123,7 +141,9 @@ func main() {
 	log.Printf("registered: id=%s ip=%s", node.ID, node.IP)
 
 	cfg := fetchCfg(node.ID)
-	if err := apply(cfg); err != nil { log.Fatalf("apply: %v", err) }
+	if err := apply(cfg); err != nil {
+		log.Fatalf("apply: %v", err)
+	}
 
 	go hb(node.ID)
 	select {} // keep running
