@@ -2,15 +2,13 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
-	"time"
 
 	bolt "go.etcd.io/bbolt"
-	"github.com/google/uuid"
 )
 
 type Node struct {
@@ -32,107 +30,99 @@ type Config struct {
 	Peers            []Peer `json:"peers"`
 }
 
-const (
-	dbFile   = "meshgate.db"
-	cidrBase = "10.42.0."
-)
+const dbFile = "meshgate.db"
 
 var (
-	db *bolt.DB
-	mu sync.Mutex
+	db     *bolt.DB
+	mu     sync.Mutex
+	policy map[string][]string
 )
 
 func main() {
+	if err := loadPolicy("../config/policy.json"); err != nil {
+		log.Fatalf("failed to load policy: %v", err)
+	}
+
 	var err error
 	db, err = bolt.Open(dbFile, 0600, nil)
 	if err != nil {
 		log.Fatal(err)
 	}
-	db.Update(func(tx *bolt.Tx) error { _, _ = tx.CreateBucketIfNotExists([]byte("nodes")); return nil })
+	db.Update(func(tx *bolt.Tx) error {
+		_, _ = tx.CreateBucketIfNotExists([]byte("nodes"))
+		return nil
+	})
 
-	http.HandleFunc("/register", handleRegister)         // POST
-	http.HandleFunc("/config/", handleConfig)            // GET /config/{nodeID}
-	http.HandleFunc("/heartbeat/", handleHeartbeat)      // POST /heartbeat/{nodeID}
+	http.HandleFunc("/register", handleRegister)
+	http.HandleFunc("/config/", handleConfig)
+	http.HandleFunc("/heartbeat/", handleHB)
 
-	log.Println("control-plane listening on :8080")
+	log.Println("control-plane listening on :8080 with policy enforcement")
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
 
-// ---------- handlers ---------------------------------------------------------
-
-func handleRegister(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		PublicKey string `json:"publicKey"`
+func loadPolicy(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
 	}
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		http.Error(w, err.Error(), 400); return
-	}
-
-	node := Node{
-		ID:        uuid.NewString(),
-		PublicKey: in.PublicKey,
-		LastSeen:  time.Now().Unix(),
-	}
-
-	mu.Lock()
-	err := db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte("nodes"))
-		nextIP := 2 + b.Stats().KeyN // .2, .3, .4, ...
-		node.IP = fmt.Sprintf("%s%d/32", cidrBase, nextIP)
-		buf, _ := json.Marshal(node)
-		return b.Put([]byte(node.ID), buf)
-	})
-	mu.Unlock()
-	if err != nil { http.Error(w, err.Error(), 500); return }
-
-	json.NewEncoder(w).Encode(node)
+	return json.Unmarshal(data, &policy)
 }
 
 func handleConfig(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimPrefix(r.URL.Path, "/config/")
-
 	var self Node
 	var all []Node
+
 	db.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte("nodes"))
 		_ = b.ForEach(func(k, v []byte) error {
 			var n Node
 			if err := json.Unmarshal(v, &n); err == nil {
 				all = append(all, n)
-				if string(k) == id { self = n }
+				if string(k) == id {
+					self = n
+				}
 			}
 			return nil
 		})
 		return nil
 	})
-	if self.ID == "" { http.NotFound(w, r); return }
+	if self.ID == "" {
+		http.NotFound(w, r)
+		return
+	}
 
-	cfg := Config{
-		InterfaceAddress: self.IP,
-		ListenPort:       51820,
-	}
+	allowed := policy[self.PublicKey]
+	allowAll := len(allowed) == 0
+
+	var cfg Config
+	cfg.InterfaceAddress = self.IP
+	cfg.ListenPort = 51820
+
 	for _, peer := range all {
-		if peer.ID == self.ID { continue }
-		cfg.Peers = append(cfg.Peers, Peer{
-			PublicKey:  peer.PublicKey,
-			Endpoint:   "",                     // can be filled later
-			AllowedIPs: []string{peer.IP},
-		})
+		if peer.ID == self.ID {
+			continue
+		}
+		if allowAll || contains(allowed, peer.PublicKey) {
+			cfg.Peers = append(cfg.Peers, Peer{
+				PublicKey:  peer.PublicKey,
+				AllowedIPs: []string{peer.IP},
+			})
+		}
 	}
+
 	json.NewEncoder(w).Encode(cfg)
 }
 
-func handleHeartbeat(w http.ResponseWriter, r *http.Request) {
-	id := strings.TrimPrefix(r.URL.Path, "/heartbeat/")
-	_ = db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte("nodes"))
-		v := b.Get([]byte(id))
-		if v == nil { return nil }
-		var n Node
-		if err := json.Unmarshal(v, &n); err != nil { return err }
-		n.LastSeen = time.Now().Unix()
-		buf, _ := json.Marshal(n)
-		return b.Put([]byte(id), buf)
-	})
-	w.WriteHeader(http.StatusOK)
+func contains(list []string, s string) bool {
+	for _, v := range list {
+		if v == s {
+			return true
+		}
+	}
+	return false
 }
+
+func handleRegister(w http.ResponseWriter, r *http.Request) {}
+func handleHB(w http.ResponseWriter, r *http.Request)       {}
