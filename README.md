@@ -15,11 +15,10 @@ This project was built as a **learning exercise and portfolio piece** to demonst
 - Building distributed systems with Go
 - Multi-cloud infrastructure management
 - Service discovery and health monitoring
-- Modern web development with Next.js and TypeScript
 
 This project showcases the ability to architect, build, and deploy complex distributed systems while demonstrating practical knowledge of the technologies and patterns used in production environments.
 
-## ��️ Architecture
+## 🏗️ Architecture
 
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
@@ -45,35 +44,48 @@ This project showcases the ability to architect, build, and deploy complex distr
 - **Go**: WireGuard config daemon + control plane
 - **WireGuard**: Fast, modern VPN protocol for mesh networking
 - **Zero-Trust**: Custom control plane with identity-based access control
+- **BoltDB**: Embedded key-value database for node persistence
 
 ### Infrastructure & Operations
 - **Terraform**: Multi-cloud setup across AWS + GCP
-- **Consul**: Service discovery and health checking
-- **CI/CD**: GitHub Actions + ArgoCD (for push-to-deploy infra)
-
-### Management Interface
-- **Next.js**: Web dashboard to manage peer configurations
-- **TypeScript**: Type-safe frontend development
-- **Tailwind UI**: Modern, responsive interface
+- **Ubuntu 22.04**: Base OS for all instances
+- **WireGuard Tools**: Native WireGuard utilities for interface management
 
 ## 🚀 Quick Start
 
 ### Prerequisites
 - Go 1.21+
 - Terraform 1.5+
-- Docker & Docker Compose
-- Node.js 18+ (for dashboard)
 - WireGuard tools (`wg`, `wg-quick`)
+- AWS/GCP credentials configured
 
 ### 1. Deploy Infrastructure
 
+#### AWS Deployment
 ```bash
 # Clone the repository
 git clone https://github.com/your-org/meshgate.git
 cd meshgate
 
-# Initialize Terraform
-cd terraform
+# Initialize and deploy AWS infrastructure
+cd terraform/aws
+terraform init
+terraform plan
+terraform apply
+```
+
+#### GCP Deployment
+```bash
+# Clone the repository
+git clone https://github.com/your-org/meshgate.git
+cd meshgate
+
+# Configure GCP project
+cd terraform/gcp
+# Edit terraform.tfvars with your GCP project ID
+# gcp_project = "your-gcp-project-id"
+
+# Initialize and deploy GCP infrastructure
 terraform init
 terraform plan
 terraform apply
@@ -98,24 +110,13 @@ go build -o meshgate-agent main.go
 ./meshgate-agent -config /path/to/agent-config.json
 ```
 
-### 4. Access Dashboard
-
-```bash
-# Start the Next.js dashboard
-cd dashboard
-npm install
-npm run dev
-```
-
-Visit `http://localhost:3000` to manage your mesh network.
-
 ## 📋 Features
 
 ### 🔐 Zero-Trust Security
 - Identity-based access control
 - Certificate-based authentication
 - Automatic key rotation
-- Audit logging and compliance
+- Policy-based peer authorization
 
 ### 🌐 Multi-Cloud Support
 - AWS VPC integration
@@ -124,152 +125,183 @@ Visit `http://localhost:3000` to manage your mesh network.
 - Hybrid cloud scenarios
 
 ### 🔄 Service Discovery
-- Consul integration for service registration
-- Automatic peer discovery
+- Automatic peer discovery via control plane
 - Health checking and failover
-- Load balancing across mesh
+- Real-time configuration updates
+- Heartbeat monitoring
 
-### 🎛️ Management Dashboard
-- Real-time network topology visualization
-- Peer configuration management
-- Traffic monitoring and analytics
-- User and access management
-
-### 🚀 CI/CD Integration
-- GitHub Actions for automated testing
-- ArgoCD for GitOps deployment
-- Infrastructure as Code with Terraform
-- Automated security scanning
+### 🚀 Infrastructure as Code
+- Terraform for AWS and GCP
+- Automated instance provisioning
+- Security group configuration
+- Multi-cloud deployment patterns
 
 ## 📁 Project Structure
 
 ```
 meshgate/
 ├── agent/                 # WireGuard mesh agent
-│   ├── main.go           # Agent entry point
-│   └── config/           # Agent configurations
+│   └── main.go           # Agent entry point with key management
 ├── control-plane/         # Zero-trust control plane
-│   ├── main.go           # Control plane server
-│   ├── config/           # Control plane configs
-│   └── api/              # REST API handlers
-├── dashboard/             # Next.js web dashboard
-│   ├── app/              # App Router pages
-│   ├── components/       # React components
-│   └── lib/              # Utilities and helpers
+│   ├── main.go           # Control plane server with policy enforcement
+│   └── config/           # Configuration files
+│       ├── local.json    # Local development config
+│       └── policy.json   # Access control policies
 ├── terraform/             # Infrastructure as Code
 │   ├── aws/              # AWS resources
-│   ├── gcp/              # GCP resources
-│   └── modules/          # Reusable modules
-├── consul/                # Service discovery config
-├── .github/               # GitHub Actions workflows
-└── docs/                  # Documentation
+│   │   ├── main.tf       # VPC, security groups, EC2 instances
+│   │   ├── variables.tf  # AWS-specific variables
+│   │   ├── outputs.tf    # Output values
+│   │   └── terraform.tfvars # AWS configuration
+│   └── gcp/              # GCP resources
+│       ├── main.tf       # VPC, firewall rules, Compute instances
+│       ├── variables.tf  # GCP-specific variables
+│       ├── outputs.tf    # Output values
+│       └── terraform.tfvars # GCP configuration
+├── go.mod                 # Go module dependencies
+├── go.sum                 # Dependency checksums
+├── meshgate.db           # BoltDB database file
+└── README.md             # This file
 ```
 
 ## 🔧 Configuration
 
 ### Agent Configuration
 
-```json
-{
-  "interfaceAddress": "10.42.0.2/32",
-  "listenPort": 51820,
-  "controlPlane": {
-    "endpoint": "https://control.meshgate.local",
-    "authToken": "your-auth-token"
-  },
-  "consul": {
-    "address": "consul.meshgate.local:8500",
-    "serviceName": "meshgate-agent"
-  }
-}
-```
+The agent automatically:
+- Generates and manages WireGuard key pairs
+- Registers with the control plane
+- Fetches peer configurations
+- Applies WireGuard interface settings
+- Sends heartbeat signals
+
+Environment variables:
+- `CONTROL_PLANE`: Control plane endpoint (default: http://localhost:8080)
+- `NODE_TOKEN`: Authentication token (default: meshgate-secret)
 
 ### Control Plane Configuration
 
+The control plane provides:
+- Node registration and management
+- Policy-based peer authorization
+- Configuration distribution
+- Health monitoring
+
+Configuration files:
+- `config/policy.json`: Access control policies
+- `config/local.json`: Local development settings
+
+### Policy Configuration
+
 ```json
 {
-  "server": {
-    "port": 8080,
-    "tls": {
-      "certFile": "/path/to/cert.pem",
-      "keyFile": "/path/to/key.pem"
-    }
-  },
-  "consul": {
-    "address": "localhost:8500"
-  },
-  "auth": {
-    "jwtSecret": "your-jwt-secret",
-    "sessionTimeout": "24h"
-  }
+  "<NODE_A_PUBLIC_KEY>": [
+    "<NODE_B_PUBLIC_KEY>",
+    "<NODE_C_PUBLIC_KEY>"
+  ],
+  "<NODE_B_PUBLIC_KEY>": [
+    "<NODE_A_PUBLIC_KEY>"
+  ]
 }
 ```
 
-## 🧪 Development
+## 🔍 API Endpoints
+
+### Control Plane API
+
+- `POST /register` - Register a new node
+- `GET /config/{id}` - Get WireGuard configuration for a node
+- `POST /heartbeat/{id}` - Update node heartbeat
+
+### Example Usage
+
+```bash
+# Register a new node
+curl -X POST http://localhost:8080/register \
+  -H "Authorization: Bearer meshgate-secret" \
+  -H "Content-Type: application/json" \
+  -d '{"publicKey": "your-public-key"}'
+
+# Get configuration for a node
+curl http://localhost:8080/config/node-id \
+  -H "Authorization: Bearer meshgate-secret"
+```
+
+## 🛠️ Development
+
+### Building from Source
+
+```bash
+# Build agent
+cd agent
+go build -o meshgate-agent main.go
+
+# Build control plane
+cd control-plane
+go build -o meshgate-cp main.go
+```
 
 ### Running Locally
 
 ```bash
-# Start Consul for service discovery
-docker run -d --name consul -p 8500:8500 consul:latest
-
 # Start control plane
 cd control-plane
-go run main.go -config config/local.json
+go run main.go
 
-# Start agent
+# In another terminal, start agent
 cd agent
-go run main.go -config config/local.json
-
-# Start dashboard
-cd dashboard
-npm run dev
+go run main.go
 ```
 
-### Testing
+### Infrastructure Configuration
 
+#### AWS Configuration
+Edit `terraform/aws/terraform.tfvars`:
+```hcl
+aws_region = "us-east-1"
+aws_instance_type = "t3.micro"
+aws_key_name = "your-key-pair-name"
+```
+
+#### GCP Configuration
+Edit `terraform/gcp/terraform.tfvars`:
+```hcl
+gcp_project = "your-gcp-project-id"
+gcp_region = "us-east1"
+gcp_zone = "us-east1-b"
+gcp_machine_type = "e2-micro"
+```
+
+## 📊 Monitoring
+
+The system provides:
+- Node registration tracking
+- Heartbeat monitoring
+- Policy enforcement logging
+- WireGuard interface status
+
+Check logs for operational insights:
 ```bash
-# Run unit tests
-go test ./...
+# Control plane logs
+tail -f /var/log/meshgate-cp.log
 
-# Run integration tests
-go test -tags=integration ./...
-
-# Run dashboard tests
-cd dashboard
-npm test
+# WireGuard interface status
+wg show
 ```
 
-## 📊 Monitoring & Observability
+## 🔒 Security Considerations
 
-- **Metrics**: Prometheus integration for mesh metrics
-- **Logging**: Structured logging with correlation IDs
-- **Tracing**: Distributed tracing across mesh nodes
-- **Health Checks**: Comprehensive health monitoring
-
-## 🔒 Security
-
-- **Zero-Trust**: No implicit trust between services
-- **Certificate Management**: Automatic certificate rotation
-- **Audit Logging**: Complete audit trail of all operations
-- **Compliance**: SOC 2, GDPR, and HIPAA ready
+- All communication uses Bearer token authentication
+- WireGuard keys are stored securely with proper permissions
+- Policy-based access control prevents unauthorized connections
+- Heartbeat monitoring detects offline nodes
 
 ## 🤝 Contributing
 
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+This is a learning project demonstrating mesh networking concepts. Feel free to explore the code and use it as a reference for understanding distributed systems and zero-trust architectures.
 
 ## 📄 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-
-## 🆘 Support
-
-- **Documentation**: [docs.meshgate.dev](https://docs.meshgate.dev)
-- **Issues**: [GitHub Issues](https://github.com/your-org/meshgate/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/your-org/meshgate/discussions)
-- **Community**: [Discord](https://discord.gg/meshgate)
+Inspired by Tailscale's excellent work in mesh networking.
