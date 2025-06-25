@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -32,17 +33,21 @@ type Config struct {
 	Peers            []Peer `json:"peers"`
 }
 
-const (
-	dbFile   = "meshgate.db"
-	cidrBase = "10.42.0."
-)
+const dbFile = "meshgate.db"
 
 var (
-	db *bolt.DB
-	mu sync.Mutex
+	db          *bolt.DB
+	mu          sync.Mutex
+	sharedToken string
 )
 
 func main() {
+	// one shared secret for now (env var CP_SHARED_TOKEN or default)
+	sharedToken = os.Getenv("CP_SHARED_TOKEN")
+	if sharedToken == "" {
+		sharedToken = "meshgate-secret"
+	}
+
 	var err error
 	db, err = bolt.Open(dbFile, 0600, nil)
 	if err != nil {
@@ -50,20 +55,38 @@ func main() {
 	}
 	db.Update(func(tx *bolt.Tx) error { _, _ = tx.CreateBucketIfNotExists([]byte("nodes")); return nil })
 
-	http.HandleFunc("/register", handleRegister)         // POST
-	http.HandleFunc("/config/", handleConfig)            // GET /config/{nodeID}
-	http.HandleFunc("/heartbeat/", handleHeartbeat)      // POST /heartbeat/{nodeID}
+	http.HandleFunc("/register", handleRegister)
+	http.HandleFunc("/config/", handleConfig)     // GET /config/{nodeID}
+	http.HandleFunc("/heartbeat/", handleHB)     // POST /heartbeat/{nodeID}
 
 	log.Println("control-plane listening on :8080")
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
 
-// ---------- handlers ---------------------------------------------------------
+// ------------------------------------------------------------------ helpers --
+
+func authorised(w http.ResponseWriter, r *http.Request) bool {
+	if r.Header.Get("Authorization") != "Bearer "+sharedToken {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return false
+	}
+	return true
+}
+
+// stable /16 allocator: 10.42.X.Y, skipping .0.* & .1.*
+func allocateIP(n uint64) string {
+	idx := n + 2 // reserve .0 & .1 blocks
+	octet3 := idx / 254
+	octet4 := idx % 254
+	return fmt.Sprintf("10.42.%d.%d/32", octet3, octet4)
+}
+
+// ------------------------------------------------------------- HTTP handlers --
 
 func handleRegister(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		PublicKey string `json:"publicKey"`
-	}
+	if !authorised(w, r) { return }
+
+	var in struct{ PublicKey string `json:"publicKey"` }
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		http.Error(w, err.Error(), 400); return
 	}
@@ -77,8 +100,7 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 	mu.Lock()
 	err := db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte("nodes"))
-		nextIP := 2 + b.Stats().KeyN // .2, .3, .4, ...
-		node.IP = fmt.Sprintf("%s%d/32", cidrBase, nextIP)
+		node.IP = allocateIP(uint64(b.Stats().KeyN))
 		buf, _ := json.Marshal(node)
 		return b.Put([]byte(node.ID), buf)
 	})
@@ -89,10 +111,12 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleConfig(w http.ResponseWriter, r *http.Request) {
+	if !authorised(w, r) { return }
+
 	id := strings.TrimPrefix(r.URL.Path, "/config/")
 
 	var self Node
-	var all []Node
+	var all  []Node
 	db.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte("nodes"))
 		_ = b.ForEach(func(k, v []byte) error {
@@ -107,22 +131,20 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 	})
 	if self.ID == "" { http.NotFound(w, r); return }
 
-	cfg := Config{
-		InterfaceAddress: self.IP,
-		ListenPort:       51820,
-	}
-	for _, peer := range all {
-		if peer.ID == self.ID { continue }
+	cfg := Config{InterfaceAddress: self.IP, ListenPort: 51820}
+	for _, p := range all {
+		if p.ID == self.ID { continue }
 		cfg.Peers = append(cfg.Peers, Peer{
-			PublicKey:  peer.PublicKey,
-			Endpoint:   "",                     // can be filled later
-			AllowedIPs: []string{peer.IP},
+			PublicKey:  p.PublicKey,
+			AllowedIPs: []string{p.IP},
 		})
 	}
 	json.NewEncoder(w).Encode(cfg)
 }
 
-func handleHeartbeat(w http.ResponseWriter, r *http.Request) {
+func handleHB(w http.ResponseWriter, r *http.Request) {
+	if !authorised(w, r) { return }
+
 	id := strings.TrimPrefix(r.URL.Path, "/heartbeat/")
 	_ = db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte("nodes"))
