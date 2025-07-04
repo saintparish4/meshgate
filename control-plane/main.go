@@ -158,7 +158,11 @@ func main() {
 	}
 
 	// Load Policy
-	if err := loadPolicy("../config/policy.json"); err != nil {
+	policyPath := os.Getenv("POLICY_PATH")
+	if policyPath == "" {
+		policyPath = "config/policy.json"
+	}
+	if err := loadPolicy(policyPath); err != nil {
 		log.Fatalf("Failed to load policy: %v", err)
 	}
 
@@ -261,7 +265,6 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 			}
 			return nil
 		})
-		return nil
 	})
 
 	if existingNode.ID != "" {
@@ -458,49 +461,46 @@ func cleanupStaleNodes() {
 	ticker := time.NewTicker(cleanupInterval)
 	defer ticker.Stop()
 
-	for {
-		select {
-		case <-ticker.C:
-			mu.Lock()
-			var staleNodeIDs []string
+	for range ticker.C {
+		mu.Lock()
+		var staleNodeIDs []string
 
+		db.View(func(tx *bolt.Tx) error {
+			b := tx.Bucket([]byte("nodes"))
+			return b.ForEach(func(k, v []byte) error {
+				var n Node
+				if err := json.Unmarshal(v, &n); err == nil {
+					if time.Now().Unix()-n.LastSeen > int64(nodeTimeout.Seconds()) {
+						staleNodeIDs = append(staleNodeIDs, string(k))
+					}
+				}
+				return nil
+			})
+		})
+
+		for _, nodeID := range staleNodeIDs {
+			var node Node
 			db.View(func(tx *bolt.Tx) error {
 				b := tx.Bucket([]byte("nodes"))
-				return b.ForEach(func(k, v []byte) error {
-					var n Node
-					if err := json.Unmarshal(v, &n); err == nil {
-						if time.Now().Unix()-n.LastSeen > int64(nodeTimeout.Seconds()) {
-							staleNodeIDs = append(staleNodeIDs, string(k))
-						}
-					}
-					return nil
-				})
+				data := b.Get([]byte(nodeID))
+				if data != nil {
+					json.Unmarshal(data, &node)
+				}
+				return nil
 			})
 
-			for _, nodeID := range staleNodeIDs {
-				var node Node
-				db.View(func(tx *bolt.Tx) error {
-					b := tx.Bucket([]byte("nodes"))
-					data := b.Get([]byte(nodeID))
-					if data != nil {
-						json.Unmarshal(data, &node)
-					}
-					return nil
-				})
+			db.Update(func(tx *bolt.Tx) error {
+				b := tx.Bucket([]byte("nodes"))
+				return b.Delete([]byte(nodeID))
+			})
 
-				db.Update(func(tx *bolt.Tx) error {
-					b := tx.Bucket([]byte("nodes"))
-					return b.Delete([]byte(nodeID))
-				})
-
-				if node.IP != "" {
-					ipPool.ReleaseIP(node.IP)
-				}
-
-				log.Printf("cleaned up stale node: %s", nodeID)
+			if node.IP != "" {
+				ipPool.ReleaseIP(node.IP)
 			}
-			mu.Unlock()
+
+			log.Printf("cleaned up stale node: %s", nodeID)
 		}
+		mu.Unlock()
 	}
 }
 
