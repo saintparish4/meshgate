@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -21,26 +22,26 @@ import (
 
 // Configuration constants
 const (
-	defaultKeyPath = "/etc/wireguard/meshgate.key"
-	defaultInterface = "wg0"
-	heartbeatInterval = 30 * time.Second
+	defaultKeyPath     = "/etc/wireguard/meshgate.key"
+	defaultInterface   = "wg0"
+	heartbeatInterval  = 30 * time.Second
 	configPollInterval = 60 * time.Second
-	httpTimeout = 10 * time.Second
-	maxRetries = 3
-	retryDelay = 5 * time.Second
+	httpTimeout        = 10 * time.Second
+	maxRetries         = 3
+	retryDelay         = 5 * time.Second
 )
 
 // Data Structures
 type Peer struct {
-	PublicKey string `json:"public_key"`
+	PublicKey  string   `json:"public_key"`
 	AllowedIPs []string `json:"allowed_ips"`
-	Endpoint string `json:"endpoint"`
+	Endpoint   string   `json:"endpoint,omitempty"`
 }
 
 type Config struct {
 	InterfaceAddress string `json:"interface_address"`
-	ListenPort int `json:"listen_port"`
-	Peers []Peer `json:"peers"`
+	ListenPort       int    `json:"listen_port"`
+	Peers            []Peer `json:"peers"`
 }
 
 type Node struct {
@@ -50,31 +51,31 @@ type Node struct {
 
 // Client wraps HTTP operations with proper error handling and retries
 type Client struct {
-	baseURL string
-	token string
+	baseURL    string
+	token      string
 	httpClient *http.Client
 }
 
 // MeshGate represents the main application
 type MeshGate struct {
-	client *Client
-	keyPath string
+	client        *Client
+	keyPath       string
 	interfaceName string
-	privateKey string
-	publicKey string
-	node Node
+	privateKey    string
+	publicKey     string
+	node          Node
 	currentConfig Config
-	mu sync.RWMutex
-	ctx context.Context
-	cancel context.CancelFunc
-	wg sync.WaitGroup
+	mu            sync.RWMutex
+	ctx           context.Context
+	cancel        context.CancelFunc
+	wg            sync.WaitGroup
 }
 
 // NewClient creates a new HTTP client
 func NewClient() *Client {
 	return &Client{
 		baseURL: getControlPlaneURL(),
-		token: getNodeToken(),
+		token:   getNodeToken(),
 		httpClient: &http.Client{
 			Timeout: httpTimeout,
 		},
@@ -91,7 +92,7 @@ func getControlPlaneURL() string {
 
 func getNodeToken() string {
 	if t := os.Getenv("NODE_TOKEN"); t != "" {
-		return t 
+		return t
 	}
 	return "meshgate-secret"
 }
@@ -157,35 +158,35 @@ func (c *Client) do(ctx context.Context, method, path string, body []byte) (*htt
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
 			lastErr = err
-			if i < maxRetries - 1 {
+			if i < maxRetries-1 {
 				select {
-					case <-ctx.Done():
-						return nil, ctx.Err()
-					case <-time.After(retryDelay):
-						continue
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				case <-time.After(retryDelay):
+					continue
 				}
 			}
 			continue
 		}
-        
+
 		// Check for HTTP errors
 		if resp.StatusCode >= 400 {
 			body, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
 			lastErr = fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
-			if i < maxRetries - 1 && resp.StatusCode >= 500 {
+			if i < maxRetries-1 && resp.StatusCode >= 500 {
 				select {
-					case <-ctx.Done():
-						return nil, ctx.Err()
-					case <-time.After(retryDelay):
-						continue
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				case <-time.After(retryDelay):
+					continue
 				}
-			} 
-		continue
+			}
+			continue
+		}
+		return resp, nil
 	}
-	return resp, nil
-}
-return nil, fmt.Errorf("max retries exceeded: %w", lastErr
+	return nil, fmt.Errorf("max retries exceeded: %w", lastErr)
 }
 
 // CONTROL PLANE OPERATIONS
@@ -213,7 +214,13 @@ func (mg *MeshGate) register(ctx context.Context) error {
 func (mg *MeshGate) fetchConfig(ctx context.Context) (Config, error) {
 	resp, err := mg.client.do(ctx, "GET", "/config/"+mg.node.ID, nil)
 	if err != nil {
-		return Config{}, fmt.Errorf("Failed to decode config response: %w", err)
+		return Config{}, fmt.Errorf("failed to fetch config: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var config Config
+	if err := json.NewDecoder(resp.Body).Decode(&config); err != nil {
+		return Config{}, fmt.Errorf("failed to decode config response: %w", err)
 	}
 	return config, nil
 }
@@ -279,7 +286,7 @@ func (mg *MeshGate) applyConfig(config Config) error {
 		if peer.Endpoint != "" {
 			peerArgs = append(peerArgs, "endpoint", peer.Endpoint)
 		}
-		
+
 		if err := exec.Command("wg", peerArgs...).Run(); err != nil {
 			return fmt.Errorf("failed to add peer %s: %w", peer.PublicKey, err)
 		}
@@ -438,4 +445,3 @@ func main() {
 		log.Fatalf("MeshGate failed: %v", err)
 	}
 }
-
