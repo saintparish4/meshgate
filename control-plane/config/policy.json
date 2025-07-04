@@ -1,10 +1,4 @@
 {
-    "<NODE_A_PUBLIC_KEY>": [
-      "<NODE_B_PUBLIC_KEY>",
-      "<NODE_C_PUBLIC_KEY>"
-    ],
-    "<NODE_B_PUBLIC_KEY>": [
-      "<NODE_A_PUBLIC_KEY>"
-    ]
-  }
+  "": []
+}
   

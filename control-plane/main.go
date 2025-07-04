@@ -201,8 +201,8 @@ func main() {
 
 	// Setup HTTP Routes
 	http.HandleFunc("/register", authMiddleware(handleRegister))
-	http.HandleFunc("/config", authMiddleware(handleConfig))
-	http.HandleFunc("/heartbeat", authMiddleware(handleHeartbeat))
+	http.HandleFunc("/config/", authMiddleware(handleConfig))
+	http.HandleFunc("/heartbeat/", authMiddleware(handleHeartbeat))
 	http.HandleFunc("/nodes", authMiddleware(handleNodes))
 	http.HandleFunc("/health", handleHealth)
 

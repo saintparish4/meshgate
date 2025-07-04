@@ -12,20 +12,33 @@ This guide will help you get MeshGate running locally for development and testin
 
 1. **Build the components:**
    ```bash
+   # Cross-platform (recommended)
+   make build
+   
+   # Or platform-specific:
+   # Linux/macOS
    chmod +x build.sh
    ./build.sh
+   
+   # Windows PowerShell
+   .\build.ps1
    ```
 
 2. **Start the control plane:**
    ```bash
    cd control-plane
+   
+   # Linux/macOS
    NODE_TOKEN=meshgate-secret go run main.go
+   
+   # Windows PowerShell
+   $env:NODE_TOKEN="meshgate-secret"; go run main.go
    ```
 
 3. **In another terminal, start an agent:**
    ```bash
    cd agent
-   CONTROL_PLANE_URL=http://localhost:8080 NODE_TOKEN=meshgate-secret go run main.go
+   go run main.go
    ```
 
 ## Testing the Mesh Network
@@ -92,6 +105,12 @@ Edit `control-plane/config/policy.json` to control which nodes can connect to ea
 3. **Interface creation fails:**
    - Ensure WireGuard kernel module is loaded
    - Check for existing wg0 interface
+   - **Antivirus interference**: Some antivirus software may block WireGuard operations
+
+4. **Antivirus blocking operations:**
+   - Temporarily disable real-time protection during testing
+   - Use the antivirus-friendly build script: `./build-safe.sh`
+   - Add project directory to antivirus exclusions
 
 ## Next Steps
 

@@ -53,6 +53,8 @@ This project showcases the ability to architect, build, and deploy complex distr
 
 ## 🚀 Quick Start
 
+> **For detailed local development setup, see [QUICKSTART.md](QUICKSTART.md)**
+
 ### Prerequisites
 - Go 1.21+
 - Terraform 1.5+
@@ -94,9 +96,9 @@ terraform apply
 ### 2. Start Control Plane
 
 ```bash
-# Start the control plane
+# Start the control plane (see QUICKSTART.md for detailed local setup)
 cd control-plane
-go run main.go -config config/local.json
+NODE_TOKEN=meshgate-secret go run main.go
 ```
 
 ### 3. Deploy Agents
@@ -107,7 +109,7 @@ cd agent
 go build -o meshgate-agent main.go
 
 # Deploy to your infrastructure
-./meshgate-agent -config /path/to/agent-config.json
+CONTROL_PLANE_URL=http://your-control-plane:8080 NODE_TOKEN=meshgate-secret ./meshgate-agent
 ```
 
 ## 📋 Features
@@ -145,7 +147,6 @@ meshgate/
 ├── control-plane/         # Zero-trust control plane
 │   ├── main.go           # Control plane server with policy enforcement
 │   └── config/           # Configuration files
-│       ├── local.json    # Local development config
 │       └── policy.json   # Access control policies
 ├── terraform/             # Infrastructure as Code
 │   ├── aws/              # AWS resources
@@ -176,7 +177,7 @@ The agent automatically:
 - Sends heartbeat signals
 
 Environment variables:
-- `CONTROL_PLANE`: Control plane endpoint (default: http://localhost:8080)
+- `CONTROL_PLANE_URL`: Control plane endpoint (default: http://localhost:8080)
 - `NODE_TOKEN`: Authentication token (default: meshgate-secret)
 
 ### Control Plane Configuration
@@ -189,7 +190,6 @@ The control plane provides:
 
 Configuration files:
 - `config/policy.json`: Access control policies
-- `config/local.json`: Local development settings
 
 ### Policy Configuration
 
@@ -231,14 +231,27 @@ curl http://localhost:8080/config/node-id \
 
 ### Building from Source
 
+**Cross-Platform (Recommended):**
 ```bash
-# Build agent
-cd agent
-go build -o meshgate-agent main.go
+# Build all components
+make build
 
-# Build control plane
-cd control-plane
-go build -o meshgate-cp main.go
+# Run local tests
+make test
+
+# Clean build artifacts
+make clean
+```
+
+**Platform-Specific:**
+```bash
+# Linux/macOS
+./build.sh
+./test-local.sh
+
+# Windows PowerShell
+.\build.ps1
+.\test-local.ps1
 ```
 
 ### Running Locally
@@ -246,12 +259,21 @@ go build -o meshgate-cp main.go
 ```bash
 # Start control plane
 cd control-plane
-go run main.go
+$env:NODE_TOKEN="meshgate-secret"; go run main.go
+
+# Or on Linux/macOS:
+cd control-plane
+NODE_TOKEN="meshgate-secret" go run main.go
 
 # In another terminal, start agent
 cd agent
 go run main.go
 ```
+
+**Required Environment Variables:**
+- `NODE_TOKEN`: Authentication token for the control plane (default: "meshgate-secret")
+- `POLICY_PATH`: Path to policy configuration (default: "config/policy.json")
+- `SUBNET`: Network subnet for IP allocation (default: "10.10.10.0/24")
 
 ### Infrastructure Configuration
 
@@ -295,6 +317,31 @@ wg show
 - WireGuard keys are stored securely with proper permissions
 - Policy-based access control prevents unauthorized connections
 - Heartbeat monitoring detects offline nodes
+
+## 🛡️ Antivirus Considerations
+
+Some antivirus software (like McAfee, Norton, Windows Defender) may flag Go binaries or WireGuard operations as suspicious. If you encounter issues:
+
+### Option 1: Temporarily Disable Antivirus
+- Temporarily disable real-time protection during testing
+- Add the project directory to antivirus exclusions
+- Re-enable protection after testing
+
+### Option 2: Use Build-Safe Script
+```bash
+# Use the antivirus-friendly build script
+./build-safe.sh
+
+# Or on Windows PowerShell
+.\build-safe.ps1
+```
+
+The `build-safe.sh` script uses `-ldflags="-s -w"` to strip debug information and reduce antivirus false positives.
+
+### Common Issues
+- **"Access denied" errors**: Antivirus blocking file operations
+- **WireGuard interface creation fails**: Antivirus blocking network operations
+- **Process termination**: Antivirus quarantining binaries
 
 ## 🤝 Contributing
 

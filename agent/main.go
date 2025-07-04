@@ -17,6 +17,8 @@ import (
 	"syscall"
 	"time"
 
+	"runtime"
+
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
 
@@ -235,6 +237,11 @@ func (mg *MeshGate) sendHeartbeat(ctx context.Context) error {
 
 // WireGuard Interface Management
 func (mg *MeshGate) createInterface() error {
+	if runtime.GOOS == "windows" {
+		return mg.createInterfaceWindows()
+	}
+
+	// Linux/Unix implementation
 	// Check if interface already exists
 	if err := exec.Command("ip", "link", "show", mg.interfaceName).Run(); err == nil {
 		log.Printf("Interface %s already exists, removing it first", mg.interfaceName)
@@ -250,8 +257,36 @@ func (mg *MeshGate) createInterface() error {
 	return nil
 }
 
+func (mg *MeshGate) createInterfaceWindows() error {
+	// Check if interface already exists
+	if err := exec.Command("netsh", "interface", "show", "interface", "name="+mg.interfaceName).Run(); err == nil {
+		log.Printf("Interface %s already exists, removing it first", mg.interfaceName)
+		if err := mg.removeInterface(); err != nil {
+			return fmt.Errorf("failed to remove existing interface: %w", err)
+		}
+	}
+
+	// Create WireGuard interface using netsh
+	if err := exec.Command("netsh", "interface", "add", "interface", "name="+mg.interfaceName, "type=wireguard").Run(); err != nil {
+		return fmt.Errorf("failed to create WireGuard interface: %w", err)
+	}
+
+	return nil
+}
+
 func (mg *MeshGate) removeInterface() error {
+	if runtime.GOOS == "windows" {
+		return mg.removeInterfaceWindows()
+	}
+
 	if err := exec.Command("ip", "link", "delete", mg.interfaceName).Run(); err != nil {
+		return fmt.Errorf("failed to remove interface: %w", err)
+	}
+	return nil
+}
+
+func (mg *MeshGate) removeInterfaceWindows() error {
+	if err := exec.Command("netsh", "interface", "delete", "interface", "name="+mg.interfaceName).Run(); err != nil {
 		return fmt.Errorf("failed to remove interface: %w", err)
 	}
 	return nil
@@ -266,6 +301,11 @@ func (mg *MeshGate) applyConfig(config Config) error {
 		return err
 	}
 
+	if runtime.GOOS == "windows" {
+		return mg.applyConfigWindows(config)
+	}
+
+	// Linux/Unix implementation
 	// Set interface address
 	if err := exec.Command("ip", "addr", "replace", config.InterfaceAddress, "dev", mg.interfaceName).Run(); err != nil {
 		return fmt.Errorf("failed to set interface address: %w", err)
@@ -295,6 +335,60 @@ func (mg *MeshGate) applyConfig(config Config) error {
 	// Bring interface up
 	if err := exec.Command("ip", "link", "set", "up", mg.interfaceName).Run(); err != nil {
 		return fmt.Errorf("failed to bring interface up: %w", err)
+	}
+
+	mg.currentConfig = config
+	log.Printf("Applied configuration: %d peers, listen port %d", len(config.Peers), config.ListenPort)
+	return nil
+}
+
+func (mg *MeshGate) applyConfigWindows(config Config) error {
+	// Set interface address
+	ipAddr := strings.Split(config.InterfaceAddress, "/")[0]
+	if err := exec.Command("netsh", "interface", "ipv4", "set", "address", "name="+mg.interfaceName, "static", ipAddr, "255.255.255.0").Run(); err != nil {
+		return fmt.Errorf("failed to set interface address: %w", err)
+	}
+
+	// Configure WireGuard using netsh
+	// Set private key
+	if err := exec.Command("netsh", "interface", "wireguard", "set", "interface", "name="+mg.interfaceName, "private-key="+mg.privateKey).Run(); err != nil {
+		return fmt.Errorf("failed to set private key: %w", err)
+	}
+
+	// Set listen port
+	if err := exec.Command("netsh", "interface", "wireguard", "set", "interface", "name="+mg.interfaceName, "listen-port="+fmt.Sprint(config.ListenPort)).Run(); err != nil {
+		return fmt.Errorf("failed to set listen port: %w", err)
+	}
+
+	// Add peers
+	for _, peer := range config.Peers {
+		// Add peer
+		peerCmd := []string{"interface", "wireguard", "add", "peer", "interface=" + mg.interfaceName, "public-key=" + peer.PublicKey}
+		if err := exec.Command("netsh", peerCmd...).Run(); err != nil {
+			return fmt.Errorf("failed to add peer %s: %w", peer.PublicKey, err)
+		}
+
+		// Set allowed IPs for peer
+		if len(peer.AllowedIPs) > 0 {
+			allowedIPs := strings.Join(peer.AllowedIPs, ",")
+			allowedIPsCmd := []string{"interface", "wireguard", "set", "peer", "interface=" + mg.interfaceName, "public-key=" + peer.PublicKey, "allowed-ips=" + allowedIPs}
+			if err := exec.Command("netsh", allowedIPsCmd...).Run(); err != nil {
+				return fmt.Errorf("failed to set allowed IPs for peer %s: %w", peer.PublicKey, err)
+			}
+		}
+
+		// Set endpoint for peer if provided
+		if peer.Endpoint != "" {
+			endpointCmd := []string{"interface", "wireguard", "set", "peer", "interface=" + mg.interfaceName, "public-key=" + peer.PublicKey, "endpoint=" + peer.Endpoint}
+			if err := exec.Command("netsh", endpointCmd...).Run(); err != nil {
+				return fmt.Errorf("failed to set endpoint for peer %s: %w", peer.PublicKey, err)
+			}
+		}
+	}
+
+	// Enable interface
+	if err := exec.Command("netsh", "interface", "set", "interface", "name="+mg.interfaceName, "admin=enable").Run(); err != nil {
+		return fmt.Errorf("failed to enable interface: %w", err)
 	}
 
 	mg.currentConfig = config
