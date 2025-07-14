@@ -19,49 +19,15 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.etcd.io/bbolt"
 	"golang.org/x/crypto/bcrypt"
+
+	"github.com/saintparish4/meshgate/control-plane/database"
 )
 
-// Models
-
-type User struct {
-	ID           string    `json:"id"`
-	Email        string    `json:"email"`
-	PasswordHash string    `json:"password_hash"`
-	Role         string    `json:"role"` // admin, user, viewer
-	TenantID     string    `json:"tenant_id"`
-	CreatedAt    time.Time `json:"created_at"`
-	LastLogin    time.Time `json:"last_login"`
-}
-
-type TenantSettings struct {
-	SubnetCIDR        string `json:"subnet_cidr"`
-	MaxNodes          int    `json:"max_nodes"`
-	PolicyMode        string `json:"policy_mode"`
-	HeartbeatInterval int    `json:"heartbeat_interval"`
-}
-
-type Tenant struct {
-	ID        string         `json:"id"`
-	Name      string         `json:"name"`
-	Domain    string         `json:"domain"`
-	Settings  TenantSettings `json:"settings"`
-	CreatedAt time.Time      `json:"created_at"`
-	IsActive  bool           `json:"is_active"`
-	NodeLimit int            `json:"node_limit"`
-	UsedNodes int            `json:"used_nodes"`
-}
-
-type Node struct {
-	ID        string            `json:"id"`
-	TenantID  string            `json:"tenant_id"`
-	Name      string            `json:"name"`
-	PublicKey string            `json:"public_key"`
-	IPAddress string            `json:"ip_address"`
-	Status    string            `json:"status"` // online, offline, maintenance, unknown
-	LastSeen  time.Time         `json:"last_seen"`
-	CreatedAt time.Time         `json:"created_at"`
-	Metadata  map[string]string `json:"metadata"`
-}
+// Models - using types from database package
+type User = database.User
+type Tenant = database.Tenant
+type TenantSettings = database.TenantSettings
+type Node = database.Node
 
 type contextKey string
 
@@ -113,27 +79,13 @@ var (
 // Server
 
 type Server struct {
-	db        *bbolt.DB
+	db        *database.DatabaseManager
 	jwtSecret []byte
 	router    *mux.Router
 }
 
 func NewServer(dbPath string) (*Server, error) {
-	db, err := bbolt.Open(dbPath, 0600, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	// Initialize buckets
-	err = db.Update(func(tx *bbolt.Tx) error {
-		buckets := []string{"users", "tenants", "nodes", "sessions"}
-		for _, bucket := range buckets {
-			if _, err := tx.CreateBucketIfNotExists([]byte(bucket)); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
+	db, err := database.NewDatabaseManager(dbPath)
 	if err != nil {
 		return nil, err
 	}
@@ -266,11 +218,11 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// CREATE TENANT
-	tenant := &Tenant{
+	tenant := &database.Tenant{
 		ID:     generateID(),
 		Name:   registerReq.TenantName,
 		Domain: strings.Split(registerReq.Email, "@")[1],
-		Settings: TenantSettings{
+		Settings: database.TenantSettings{
 			SubnetCIDR:        "10.0.0.0/24",
 			MaxNodes:          100,
 			PolicyMode:        "strict",
@@ -293,7 +245,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user := &User{
+	user := &database.User{
 		ID:           generateID(),
 		Email:        registerReq.Email,
 		PasswordHash: string(hashedPassword),
@@ -355,7 +307,7 @@ func (s *Server) handleCreateNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	node := &Node{
+	node := &database.Node{
 		ID:        generateID(),
 		TenantID:  claims.TenantID,
 		Name:      nodeReq.Name,
@@ -458,7 +410,7 @@ func (r *statusRecorder) WriteHeader(statusCode int) {
 }
 
 // Database Operations
-func (s *Server) saveUser(user *User) error {
+func (s *Server) saveUser(user *database.User) error {
 	return s.db.Update(func(tx *bbolt.Tx) error {
 		b := tx.Bucket([]byte("users"))
 		data, err := json.Marshal(user)
@@ -469,13 +421,13 @@ func (s *Server) saveUser(user *User) error {
 	})
 }
 
-func (s *Server) getUserByEmail(email string) (*User, error) {
-	var user *User
+func (s *Server) getUserByEmail(email string) (*database.User, error) {
+	var user *database.User
 	err := s.db.View(func(tx *bbolt.Tx) error {
 		b := tx.Bucket([]byte("users"))
 		c := b.Cursor()
 		for k, v := c.First(); k != nil; k, v = c.Next() {
-			var u User
+			var u database.User
 			if err := json.Unmarshal(v, &u); err != nil {
 				continue
 			}
@@ -489,7 +441,7 @@ func (s *Server) getUserByEmail(email string) (*User, error) {
 	return user, err
 }
 
-func (s *Server) saveTenant(tenant *Tenant) error {
+func (s *Server) saveTenant(tenant *database.Tenant) error {
 	return s.db.Update(func(tx *bbolt.Tx) error {
 		b := tx.Bucket([]byte("tenants"))
 		data, err := json.Marshal(tenant)
@@ -500,21 +452,21 @@ func (s *Server) saveTenant(tenant *Tenant) error {
 	})
 }
 
-func (s *Server) getTenant(id string) (*Tenant, error) {
-	var tenant *Tenant
+func (s *Server) getTenant(id string) (*database.Tenant, error) {
+	var tenant *database.Tenant
 	err := s.db.View(func(tx *bbolt.Tx) error {
 		b := tx.Bucket([]byte("tenants"))
 		data := b.Get([]byte(id))
 		if data == nil {
 			return fmt.Errorf("tenant not found")
 		}
-		tenant = &Tenant{}
+		tenant = &database.Tenant{}
 		return json.Unmarshal(data, tenant)
 	})
 	return tenant, err
 }
 
-func (s *Server) saveNode(node *Node) error {
+func (s *Server) saveNode(node *database.Node) error {
 	return s.db.Update(func(tx *bbolt.Tx) error {
 		b := tx.Bucket([]byte("nodes"))
 		data, err := json.Marshal(node)
@@ -525,27 +477,27 @@ func (s *Server) saveNode(node *Node) error {
 	})
 }
 
-func (s *Server) getNode(id string) (*Node, error) {
-	var node *Node
+func (s *Server) getNode(id string) (*database.Node, error) {
+	var node *database.Node
 	err := s.db.View(func(tx *bbolt.Tx) error {
 		b := tx.Bucket([]byte("nodes"))
 		data := b.Get([]byte(id))
 		if data == nil {
 			return fmt.Errorf("node not found")
 		}
-		node = &Node{}
+		node = &database.Node{}
 		return json.Unmarshal(data, node)
 	})
 	return node, err
 }
 
-func (s *Server) getNodesByTenant(tenantID string) ([]*Node, error) {
-	var nodes []*Node
+func (s *Server) getNodesByTenant(tenantID string) ([]*database.Node, error) {
+	var nodes []*database.Node
 	err := s.db.View(func(tx *bbolt.Tx) error {
 		b := tx.Bucket([]byte("nodes"))
 		c := b.Cursor()
 		for k, v := c.First(); k != nil; k, v = c.Next() {
-			var node Node
+			var node database.Node
 			if err := json.Unmarshal(v, &node); err != nil {
 				continue
 			}
@@ -565,7 +517,7 @@ func generateID() string {
 	return hex.EncodeToString(bytes)
 }
 
-func (s *Server) generateJWT(user *User) (string, error) {
+func (s *Server) generateJWT(user *database.User) (string, error) {
 	claims := &AuthClaims{
 		UserID:   user.ID,
 		TenantID: user.TenantID,
