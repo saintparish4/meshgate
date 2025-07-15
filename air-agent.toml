@@ -1,0 +1,66 @@
+# air-agent.toml - Separate config for agent development
+
+root = "."
+testdata_dir = "testdata"
+tmp_dir = "tmp"
+
+[build]
+  # Agent configuration
+  args_bin = []
+  bin = "./tmp/agent.exe"
+  cmd = "go build -o ./tmp/agent.exe ./agent/"
+  delay = 1000
+  exclude_dir = ["assets", "tmp", "vendor", "testdata", "dist", "data", "logs", "certs", ".git", "node_modules"]
+  exclude_file = []
+  exclude_regex = ["_test.go"]
+  exclude_unchanged = false
+  follow_symlink = false
+  full_bin = ""
+  include_dir = []
+  include_ext = ["go", "tpl", "tmpl", "html", "yaml", "yml", "json"]
+  kill_delay = "0s"
+  log = "build-errors-agent.log"
+  send_interrupt = false
+  stop_on_root = false
+
+[color]
+  app = ""
+  build = "yellow"
+  main = "magenta"
+  runner = "green"
+  watcher = "cyan"
+
+[log]
+  time = false
+
+[misc]
+  clean_on_exit = false
+
+# Environment variables for agent development
+[[build.env]]
+  name = "MESHGATE_CONTROL_PLANE_URL"
+  value = "http://localhost:8080"
+
+[[build.env]]
+  name = "MESHGATE_NODE_NAME"
+  value = "dev-agent"
+
+[[build.env]]
+  name = "MESHGATE_TENANT_ID"
+  value = "dev-tenant"
+
+[[build.env]]
+  name = "MESHGATE_AUTH_TOKEN"
+  value = "dev-token-change-me"
+
+[[build.env]]
+  name = "MESHGATE_INTERFACE"
+  value = "wg-meshgate-dev"
+
+[[build.env]]
+  name = "MESHGATE_LISTEN_PORT"
+  value = "51821"
+
+[[build.env]]
+  name = "MESHGATE_METRICS_PORT"
+  value = "9102"

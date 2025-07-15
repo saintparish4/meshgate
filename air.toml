@@ -1,27 +1,25 @@
+# air.toml - Live reload configuration for Meshgate development
+
 root = "."
 testdata_dir = "testdata"
 tmp_dir = "tmp"
 
 [build]
+  # Control plane configuration
   args_bin = []
-  bin = "./tmp/main"
-  cmd = "go build -o ./tmp/main ."
+  bin = "./tmp/control-plane.exe"
+  cmd = "go build -o ./tmp/control-plane.exe ./control-plane"
   delay = 1000
-  exclude_dir = ["assets", "tmp", "vendor", "testdata", "terraform"]
+  exclude_dir = ["assets", "tmp", "vendor", "testdata", "dist", "data", "logs", "certs", ".git", "node_modules"]
   exclude_file = []
   exclude_regex = ["_test.go"]
   exclude_unchanged = false
   follow_symlink = false
   full_bin = ""
-  include_dir = []
-  include_ext = ["go", "tpl", "tmpl", "html"]
-  include_file = []
+  include_dir = ["control-plane"]
+  include_ext = ["go", "tpl", "tmpl", "html", "yaml", "yml", "json"]
   kill_delay = "0s"
   log = "build-errors.log"
-  poll = false
-  poll_interval = 0
-  rerun = false
-  rerun_delay = 500
   send_interrupt = false
   stop_on_root = false
 
@@ -33,17 +31,33 @@ tmp_dir = "tmp"
   watcher = "cyan"
 
 [log]
-  main_only = false
   time = false
 
 [misc]
   clean_on_exit = false
 
-[screen]
-  clear_on_rebuild = false
-  keep_scroll = true
-
 # Environment variables for development
-[env]
-  CONTROL_PLANE = "http://localhost:8080"
-  NODE_TOKEN = "meshgate-secret" 
+[[build.env]]
+  name = "DB_PATH"
+  value = "./data/meshgate-dev.db"
+
+[[build.env]]
+  name = "PORT"
+  value = "8080"
+
+[[build.env]]
+  name = "LOG_LEVEL"
+  value = "debug"
+
+[[build.env]]
+  name = "JWT_SECRET"
+  value = "dev-secret-change-in-production"
+
+# Optional: Uncomment to enable TLS in development
+# [[build.env]]
+#   name = "TLS_CERT_FILE"
+#   value = "./certs/server.crt"
+
+# [[build.env]]
+#   name = "TLS_KEY_FILE"
+#   value = "./certs/server.key"

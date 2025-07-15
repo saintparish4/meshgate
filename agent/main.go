@@ -1,3 +1,4 @@
+// agent/main.go - Enhanced version with WireGuard interface management
 package main
 
 import (
@@ -20,20 +21,25 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.zx2c4.com/wireguard/wgctrl"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
+
+	"github.com/saintparish4/meshgate/agent/wireguard" // Import our WireGuard interface management package
 )
 
 // Configuration
 type AgentConfig struct {
-	ControlPlaneURL    string        `json:"control_plane_url"`
-	NodeID             string        `json:"node_id"`
-	NodeName           string        `json:"node_name"`
-	TenantID           string        `json:"tenant_id"`
-	AuthToken          string        `json:"auth_token"`
-	InterfaceName      string        `json:"interface_name"`
-	ListenPort         int           `json:"listen_port"`
-	MetricsPort        int           `json:"metrics_port"`
-	HeartbeatInterval  time.Duration `json:"heartbeat_interval"`
-	ConfigPollInterval time.Duration `json:"config_poll_interval"`
+	ControlPlaneURL      string        `json:"control_plane_url"`
+	NodeID               string        `json:"node_id"`
+	NodeName             string        `json:"node_name"`
+	TenantID             string        `json:"tenant_id"`
+	AuthToken            string        `json:"auth_token"`
+	InterfaceName        string        `json:"interface_name"`
+	ListenPort           int           `json:"listen_port"`
+	MetricsPort          int           `json:"metrics_port"`
+	HeartbeatInterval    time.Duration `json:"heartbeat_interval"`
+	ConfigPollInterval   time.Duration `json:"config_poll_interval"`
+	MTU                  int           `json:"mtu"`
+	EnableAutoReconnect  bool          `json:"enable_auto_reconnect"`
+	MaxReconnectAttempts int           `json:"max_reconnect_attempts"`
 }
 
 // API Models
@@ -57,11 +63,6 @@ type PeerConfig struct {
 	PresharedKey string   `json:"preshared_key,omitempty"`
 }
 
-type Route struct {
-	Destination string `json:"destination"`
-	Gateway     string `json:"gateway"`
-}
-
 type HeartbeatData struct {
 	Status    string            `json:"status"`
 	Timestamp time.Time         `json:"timestamp"`
@@ -76,7 +77,24 @@ type ConnectionStats struct {
 	Uptime           int64 `json:"uptime"`
 }
 
-// Metrics
+// Enhanced Agent with WireGuard interface management
+type Agent struct {
+	config           *AgentConfig
+	wgClient         *wgctrl.Client
+	interfaceManager *wireguard.Manager
+	httpClient       *http.Client
+	privateKey       wgtypes.Key
+	publicKey        wgtypes.Key
+	startTime        time.Time
+
+	// State
+	currentConfig     *NodeConfig
+	lastStats         ConnectionStats
+	reconnectAttempts int
+	isInterfaceUp     bool
+}
+
+// Enhanced metrics with more detailed monitoring
 var (
 	agentUptime = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "ordinalgate_agent_uptime_seconds",
@@ -122,21 +140,23 @@ var (
 		},
 		[]string{"tenant_id", "node_id", "status"},
 	)
+
+	interfaceStatus = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "ordinalgate_interface_status",
+			Help: "WireGuard interface status (1 = up, 0 = down)",
+		},
+		[]string{"interface_name"},
+	)
+
+	reconnectAttempts = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "ordinalgate_reconnect_attempts_total",
+			Help: "Total number of reconnection attempts",
+		},
+		[]string{"tenant_id", "node_id"},
+	)
 )
-
-// Agent
-type Agent struct {
-	config     *AgentConfig
-	wgClient   *wgctrl.Client
-	httpClient *http.Client
-	privateKey wgtypes.Key
-	publicKey  wgtypes.Key
-	startTime  time.Time
-
-	// State
-	currentConfig *NodeConfig
-	lastStats     ConnectionStats
-}
 
 func NewAgent(configPath string) (*Agent, error) {
 	config, err := loadConfig(configPath)
@@ -144,9 +164,20 @@ func NewAgent(configPath string) (*Agent, error) {
 		return nil, fmt.Errorf("failed to load config: %w", err)
 	}
 
+	// Setup platform-specific environment
+	if err := setupPlatformEnvironment(); err != nil {
+		return nil, fmt.Errorf("failed to setup platform environment: %w", err)
+	}
+
 	wgClient, err := wgctrl.New()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create WireGuard client: %w", err)
+	}
+
+	// Create WireGuard interface manager
+	interfaceManager, err := wireguard.NewManager()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create interface manager: %w", err)
 	}
 
 	// Generate or load key pair
@@ -159,18 +190,19 @@ func NewAgent(configPath string) (*Agent, error) {
 		Timeout: 30 * time.Second,
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: true, // FOR DEVELOPMENT ONLY !!!!
+				InsecureSkipVerify: true, // FOR DEVELOPMENT ONLY
 			},
 		},
 	}
 
 	agent := &Agent{
-		config:     config,
-		wgClient:   wgClient,
-		httpClient: httpClient,
-		privateKey: privateKey,
-		publicKey:  privateKey.PublicKey(),
-		startTime:  time.Now(),
+		config:           config,
+		wgClient:         wgClient,
+		interfaceManager: interfaceManager,
+		httpClient:       httpClient,
+		privateKey:       privateKey,
+		publicKey:        privateKey.PublicKey(),
+		startTime:        time.Now(),
 	}
 
 	// Register metrics
@@ -181,15 +213,24 @@ func NewAgent(configPath string) (*Agent, error) {
 		bytesTransferred,
 		configUpdates,
 		heartbeatSent,
+		interfaceStatus,
+		reconnectAttempts,
 	)
+
 	return agent, nil
 }
 
 func (a *Agent) Start(ctx context.Context) error {
-	log.Println("Starting OrdinalGate agent")
+	log.Println("Starting OrdinalGate agent with enhanced WireGuard management")
 	log.Printf("Node ID: %s", a.config.NodeID)
 	log.Printf("Tenant ID: %s", a.config.TenantID)
 	log.Printf("Public Key: %s", a.publicKey.String())
+	log.Printf("Platform: %s", runtime.GOOS)
+
+	// Create WireGuard interface
+	if err := a.createWireGuardInterface(); err != nil {
+		return fmt.Errorf("failed to create WireGuard interface: %w", err)
+	}
 
 	// Start metrics server
 	if a.config.MetricsPort > 0 {
@@ -205,9 +246,76 @@ func (a *Agent) Start(ctx context.Context) error {
 	go a.heartbeatLoop(ctx)
 	go a.configPollLoop(ctx)
 	go a.metricsUpdateLoop(ctx)
+	go a.interfaceMonitorLoop(ctx)
 
 	// Wait for context cancellation
 	<-ctx.Done()
+
+	// Cleanup
+	return a.cleanup()
+}
+
+// createWireGuardInterface creates and configures the WireGuard interface
+func (a *Agent) createWireGuardInterface() error {
+	// Parse IP address with default if not configured
+	defaultIP := "10.0.0.1/24"
+	_, ipNet, err := net.ParseCIDR(defaultIP)
+	if err != nil {
+		return fmt.Errorf("invalid default IP: %w", err)
+	}
+
+	// Set default MTU if not configured
+	mtu := a.config.MTU
+	if mtu <= 0 {
+		mtu = 1420 // Standard WireGuard MTU
+	}
+
+	// Create interface configuration
+	interfaceConfig := &wireguard.InterfaceConfig{
+		Name:       a.config.InterfaceName,
+		PrivateKey: a.privateKey,
+		PublicKey:  a.publicKey,
+		ListenPort: a.config.ListenPort,
+		IPAddress:  ipNet,
+		MTU:        mtu,
+		Routes:     []wireguard.Route{}, // Will be populated by control plane
+	}
+
+	// Validate configuration
+	if err := wireguard.ValidateConfig(interfaceConfig); err != nil {
+		return fmt.Errorf("invalid interface config: %w", err)
+	}
+
+	// Create the interface
+	if err := a.interfaceManager.CreateInterface(interfaceConfig); err != nil {
+		return fmt.Errorf("failed to create interface: %w", err)
+	}
+
+	a.isInterfaceUp = true
+	interfaceStatus.WithLabelValues(a.config.InterfaceName).Set(1)
+	log.Printf("WireGuard interface %s created successfully", a.config.InterfaceName)
+
+	return nil
+}
+
+// cleanup performs cleanup when shutting down
+func (a *Agent) cleanup() error {
+	log.Println("Cleaning up agent resources...")
+
+	// Remove WireGuard interface
+	if err := a.interfaceManager.DeleteInterface(a.config.InterfaceName); err != nil {
+		log.Printf("Warning: failed to delete interface: %v", err)
+	}
+
+	// Close managers
+	if err := a.interfaceManager.Close(); err != nil {
+		log.Printf("Warning: failed to close interface manager: %v", err)
+	}
+
+	if err := a.wgClient.Close(); err != nil {
+		log.Printf("Warning: failed to close WireGuard client: %v", err)
+	}
+
 	return nil
 }
 
@@ -217,9 +325,11 @@ func (a *Agent) register() error {
 		PublicKey: a.publicKey.String(),
 		Metadata: map[string]string{
 			"platform":    getPlatform(),
-			"version":     "2.0.0",
+			"version":     "2.1.0", // Updated version
 			"agent_type":  "ordinalgate-agent",
 			"listen_port": fmt.Sprintf("%d", a.config.ListenPort),
+			"mtu":         fmt.Sprintf("%d", a.config.MTU),
+			"interface":   a.config.InterfaceName,
 		},
 	}
 
@@ -252,9 +362,15 @@ func (a *Agent) heartbeatLoop(ctx context.Context) {
 				log.Printf("Heartbeat failed: %v", err)
 				connectionStatus.WithLabelValues(a.config.TenantID, a.config.NodeID).Set(0)
 				heartbeatSent.WithLabelValues(a.config.TenantID, a.config.NodeID, "failed").Inc()
+
+				// Attempt reconnection if enabled
+				if a.config.EnableAutoReconnect {
+					go a.attemptReconnection()
+				}
 			} else {
 				connectionStatus.WithLabelValues(a.config.TenantID, a.config.NodeID).Set(1)
 				heartbeatSent.WithLabelValues(a.config.TenantID, a.config.NodeID, "success").Inc()
+				a.reconnectAttempts = 0 // Reset on success
 			}
 		}
 	}
@@ -293,6 +409,91 @@ func (a *Agent) metricsUpdateLoop(ctx context.Context) {
 	}
 }
 
+// interfaceMonitorLoop monitors the WireGuard interface health
+func (a *Agent) interfaceMonitorLoop(ctx context.Context) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := a.monitorInterface(); err != nil {
+				log.Printf("Interface monitoring error: %v", err)
+			}
+		}
+	}
+}
+
+// monitorInterface checks interface health and attempts recovery
+func (a *Agent) monitorInterface() error {
+	isUp, err := a.interfaceManager.IsInterfaceUp(a.config.InterfaceName)
+	if err != nil {
+		interfaceStatus.WithLabelValues(a.config.InterfaceName).Set(0)
+		return fmt.Errorf("failed to check interface status: %w", err)
+	}
+
+	if isUp != a.isInterfaceUp {
+		a.isInterfaceUp = isUp
+		if isUp {
+			interfaceStatus.WithLabelValues(a.config.InterfaceName).Set(1)
+			log.Printf("Interface %s is up", a.config.InterfaceName)
+		} else {
+			interfaceStatus.WithLabelValues(a.config.InterfaceName).Set(0)
+			log.Printf("Interface %s is down", a.config.InterfaceName)
+
+			// Attempt to bring interface back up
+			if a.config.EnableAutoReconnect {
+				go a.recoverInterface()
+			}
+		}
+	}
+
+	return nil
+}
+
+// recoverInterface attempts to recover a failed interface
+func (a *Agent) recoverInterface() {
+	log.Printf("Attempting to recover interface %s", a.config.InterfaceName)
+
+	if err := a.interfaceManager.BringUp(a.config.InterfaceName); err != nil {
+		log.Printf("Failed to bring up interface, attempting full recreation: %v", err)
+
+		// Try to recreate the interface
+		if err := a.createWireGuardInterface(); err != nil {
+			log.Printf("Failed to recreate interface: %v", err)
+		} else {
+			log.Printf("Interface %s recreated successfully", a.config.InterfaceName)
+		}
+	} else {
+		log.Printf("Interface %s brought up successfully", a.config.InterfaceName)
+	}
+}
+
+// attemptReconnection attempts to reconnect to the control plane
+func (a *Agent) attemptReconnection() {
+	if a.reconnectAttempts >= a.config.MaxReconnectAttempts {
+		log.Printf("Max reconnection attempts reached (%d)", a.config.MaxReconnectAttempts)
+		return
+	}
+
+	a.reconnectAttempts++
+	reconnectAttempts.WithLabelValues(a.config.TenantID, a.config.NodeID).Inc()
+
+	log.Printf("Attempting reconnection (%d/%d)", a.reconnectAttempts, a.config.MaxReconnectAttempts)
+
+	// Wait before attempting reconnection
+	time.Sleep(time.Duration(a.reconnectAttempts) * 30 * time.Second)
+
+	if err := a.register(); err != nil {
+		log.Printf("Reconnection attempt %d failed: %v", a.reconnectAttempts, err)
+	} else {
+		log.Printf("Reconnection successful")
+		a.reconnectAttempts = 0
+	}
+}
+
 func (a *Agent) sendHeartbeat() error {
 	stats, err := a.getConnectionStats()
 	if err != nil {
@@ -305,7 +506,9 @@ func (a *Agent) sendHeartbeat() error {
 		Timestamp: time.Now(),
 		Stats:     stats,
 		Metadata: map[string]string{
-			"uptime": fmt.Sprintf("%d", time.Since(a.startTime).Seconds()),
+			"uptime":             fmt.Sprintf("%d", int64(time.Since(a.startTime).Seconds())),
+			"interface_up":       fmt.Sprintf("%t", a.isInterfaceUp),
+			"reconnect_attempts": fmt.Sprintf("%d", a.reconnectAttempts),
 		},
 	}
 
@@ -352,7 +555,7 @@ func (a *Agent) fetchAndApplyConfig() error {
 }
 
 func (a *Agent) applyWireGuardConfig(config *NodeConfig) error {
-	// Convert peers
+	// Convert peers to WireGuard format
 	var peers []wgtypes.PeerConfig
 	for _, p := range config.Peers {
 		publicKey, err := wgtypes.ParseKey(p.PublicKey)
@@ -397,13 +600,19 @@ func (a *Agent) applyWireGuardConfig(config *NodeConfig) error {
 		peers = append(peers, peerConfig)
 	}
 
-	// Parse IP address
-	_, ipNet, err := net.ParseCIDR(config.IPAddress)
-	if err != nil {
-		return fmt.Errorf("invalid IP address %s: %w", config.IPAddress, err)
+	// Update IP address if changed
+	if config.IPAddress != "" {
+		_, ipNet, err := net.ParseCIDR(config.IPAddress)
+		if err != nil {
+			return fmt.Errorf("invalid IP address %s: %w", config.IPAddress, err)
+		}
+
+		if err := a.interfaceManager.SetIPAddress(a.config.InterfaceName, ipNet); err != nil {
+			return fmt.Errorf("failed to set IP address: %w", err)
+		}
 	}
 
-	// Configure WireGuard interface
+	// Configure WireGuard peers
 	wgConfig := wgtypes.Config{
 		PrivateKey:   &a.privateKey,
 		ListenPort:   &a.config.ListenPort,
@@ -411,17 +620,26 @@ func (a *Agent) applyWireGuardConfig(config *NodeConfig) error {
 		ReplacePeers: true,
 	}
 
-	// Try to configure existing interface, create if it doesn't exist
-	err = a.wgClient.ConfigureDevice(a.config.InterfaceName, wgConfig)
-	if err != nil {
-		log.Printf("Failed to configure existing interface, will try to create new one: %v", err)
-		// Interface doesn't exist, this is expected on first run
-		// The interface creation should be handled by the OS-specific implementation
+	if err := a.wgClient.ConfigureDevice(a.config.InterfaceName, wgConfig); err != nil {
+		return fmt.Errorf("failed to configure WireGuard device: %w", err)
 	}
 
-	// Configure IP address (OS-specific)
-	if err := a.configureInterface(ipNet); err != nil {
-		return fmt.Errorf("failed to configure interface IP: %w", err)
+	// Apply routes
+	for _, routeStr := range config.Routes {
+		_, ipNet, err := net.ParseCIDR(routeStr)
+		if err != nil {
+			log.Printf("Invalid route %s: %v", routeStr, err)
+			continue
+		}
+
+		route := wireguard.Route{
+			Destination: ipNet,
+			// Gateway will be determined by the system
+		}
+
+		if err := a.interfaceManager.AddRoute(route); err != nil {
+			log.Printf("Failed to add route %s: %v", routeStr, err)
+		}
 	}
 
 	log.Printf("WireGuard interface configured with IP %s and %d peers", config.IPAddress, len(peers))
@@ -482,6 +700,15 @@ func (a *Agent) updateMetrics() {
 	}
 
 	a.lastStats = stats
+
+	// Update interface status
+	if isUp, err := a.interfaceManager.IsInterfaceUp(a.config.InterfaceName); err == nil {
+		if isUp {
+			interfaceStatus.WithLabelValues(a.config.InterfaceName).Set(1)
+		} else {
+			interfaceStatus.WithLabelValues(a.config.InterfaceName).Set(0)
+		}
+	}
 }
 
 func (a *Agent) makeAPIRequest(method, path string, body interface{}) (*http.Response, error) {
@@ -502,7 +729,7 @@ func (a *Agent) makeAPIRequest(method, path string, body interface{}) (*http.Res
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+a.config.AuthToken)
-	req.Header.Set("User-Agent", "meshgate-agent/2.0.0")
+	req.Header.Set("User-Agent", "ordinalgate-agent/2.1.0")
 
 	resp, err := a.httpClient.Do(req)
 	if err != nil {
@@ -518,10 +745,12 @@ func (a *Agent) startMetricsServer() {
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"status":    "healthy",
-			"uptime":    time.Since(a.startTime).Seconds(),
-			"node_id":   a.config.NodeID,
-			"tenant_id": a.config.TenantID,
+			"status":             "healthy",
+			"uptime":             time.Since(a.startTime).Seconds(),
+			"node_id":            a.config.NodeID,
+			"tenant_id":          a.config.TenantID,
+			"interface_up":       a.isInterfaceUp,
+			"reconnect_attempts": a.reconnectAttempts,
 		})
 	})
 
@@ -538,47 +767,39 @@ func (a *Agent) startMetricsServer() {
 	}
 }
 
-// OS-specific interface configuration
-func (a *Agent) configureInterface(ipNet *net.IPNet) error {
-	// This is a simplified version - in production, you'd have OS-specific implementations
-	// For Linux: use netlink
-	// For Windows: use WinTun or similar
-
-	log.Printf("Interface configuration not implemented for this platform")
-	log.Printf("Please manually configure interface %s with IP %s", a.config.InterfaceName, ipNet.String())
-	return nil
-}
-
 func loadConfig(configPath string) (*AgentConfig, error) {
-	// Default configuration
+	// Default configuration with enhanced settings
 	config := &AgentConfig{
-		ControlPlaneURL:    "https://localhost:8080",
-		NodeID:             generateNodeID(),
-		NodeName:           getHostname(),
-		InterfaceName:      "wg-meshgate",
-		ListenPort:         51820,
-		MetricsPort:        9101,
-		HeartbeatInterval:  30 * time.Second,
-		ConfigPollInterval: 60 * time.Second,
+		ControlPlaneURL:      "https://localhost:8080",
+		NodeID:               generateNodeID(),
+		NodeName:             getHostname(),
+		InterfaceName:        "wg-ordinalgate",
+		ListenPort:           51820,
+		MetricsPort:          9101,
+		HeartbeatInterval:    30 * time.Second,
+		ConfigPollInterval:   60 * time.Second,
+		MTU:                  1420,
+		EnableAutoReconnect:  true,
+		MaxReconnectAttempts: 5,
 	}
 
 	// Load from environment variables
-	if url := os.Getenv("MESHGATE_CONTROL_PLANE_URL"); url != "" {
+	if url := os.Getenv("ORDINALGATE_CONTROL_PLANE_URL"); url != "" {
 		config.ControlPlaneURL = url
 	}
-	if nodeID := os.Getenv("MESHGATE_NODE_ID"); nodeID != "" {
+	if nodeID := os.Getenv("ORDINALGATE_NODE_ID"); nodeID != "" {
 		config.NodeID = nodeID
 	}
-	if nodeName := os.Getenv("MESHGATE_NODE_NAME"); nodeName != "" {
+	if nodeName := os.Getenv("ORDINALGATE_NODE_NAME"); nodeName != "" {
 		config.NodeName = nodeName
 	}
-	if tenantID := os.Getenv("MESHGATE_TENANT_ID"); tenantID != "" {
+	if tenantID := os.Getenv("ORDINALGATE_TENANT_ID"); tenantID != "" {
 		config.TenantID = tenantID
 	}
-	if token := os.Getenv("MESHGATE_AUTH_TOKEN"); token != "" {
+	if token := os.Getenv("ORDINALGATE_AUTH_TOKEN"); token != "" {
 		config.AuthToken = token
 	}
-	if iface := os.Getenv("MESHGATE_INTERFACE"); iface != "" {
+	if iface := os.Getenv("ORDINALGATE_INTERFACE"); iface != "" {
 		config.InterfaceName = iface
 	}
 
@@ -594,37 +815,8 @@ func loadConfig(configPath string) (*AgentConfig, error) {
 			return nil, fmt.Errorf("failed to parse config file: %w", err)
 		}
 
-		// Merge file config with defaults (file takes precedence)
-		if fileConfig.ControlPlaneURL != "" {
-			config.ControlPlaneURL = fileConfig.ControlPlaneURL
-		}
-		if fileConfig.NodeID != "" {
-			config.NodeID = fileConfig.NodeID
-		}
-		if fileConfig.NodeName != "" {
-			config.NodeName = fileConfig.NodeName
-		}
-		if fileConfig.TenantID != "" {
-			config.TenantID = fileConfig.TenantID
-		}
-		if fileConfig.AuthToken != "" {
-			config.AuthToken = fileConfig.AuthToken
-		}
-		if fileConfig.InterfaceName != "" {
-			config.InterfaceName = fileConfig.InterfaceName
-		}
-		if fileConfig.ListenPort > 0 {
-			config.ListenPort = fileConfig.ListenPort
-		}
-		if fileConfig.MetricsPort > 0 {
-			config.MetricsPort = fileConfig.MetricsPort
-		}
-		if fileConfig.HeartbeatInterval > 0 {
-			config.HeartbeatInterval = fileConfig.HeartbeatInterval
-		}
-		if fileConfig.ConfigPollInterval > 0 {
-			config.ConfigPollInterval = fileConfig.ConfigPollInterval
-		}
+		// Merge configurations
+		mergeConfigs(config, &fileConfig)
 	}
 
 	// Validation
@@ -638,9 +830,49 @@ func loadConfig(configPath string) (*AgentConfig, error) {
 	return config, nil
 }
 
+func mergeConfigs(base, override *AgentConfig) {
+	if override.ControlPlaneURL != "" {
+		base.ControlPlaneURL = override.ControlPlaneURL
+	}
+	if override.NodeID != "" {
+		base.NodeID = override.NodeID
+	}
+	if override.NodeName != "" {
+		base.NodeName = override.NodeName
+	}
+	if override.TenantID != "" {
+		base.TenantID = override.TenantID
+	}
+	if override.AuthToken != "" {
+		base.AuthToken = override.AuthToken
+	}
+	if override.InterfaceName != "" {
+		base.InterfaceName = override.InterfaceName
+	}
+	if override.ListenPort > 0 {
+		base.ListenPort = override.ListenPort
+	}
+	if override.MetricsPort > 0 {
+		base.MetricsPort = override.MetricsPort
+	}
+	if override.HeartbeatInterval > 0 {
+		base.HeartbeatInterval = override.HeartbeatInterval
+	}
+	if override.ConfigPollInterval > 0 {
+		base.ConfigPollInterval = override.ConfigPollInterval
+	}
+	if override.MTU > 0 {
+		base.MTU = override.MTU
+	}
+	if override.MaxReconnectAttempts > 0 {
+		base.MaxReconnectAttempts = override.MaxReconnectAttempts
+	}
+	// EnableAutoReconnect is a bool, so we need to check if it's set
+	base.EnableAutoReconnect = override.EnableAutoReconnect
+}
+
 // Utility functions
 func generateNodeID() string {
-	// Generate a unique node ID based on hostname and timestamp
 	hostname := getHostname()
 	timestamp := time.Now().Unix()
 	return fmt.Sprintf("%s-%d", hostname, timestamp)
