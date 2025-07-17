@@ -3,7 +3,7 @@
 A Go-powered overlay network for connecting private infrastructure across clouds, using WireGuard and a custom zero-trust control plane. **MeshGate is a learning project inspired by Tailscale** that demonstrates deep understanding of mesh networking, distributed systems, and zero-trust security principles.
 
 ## 🎯 One-liner
-A Go-powered overlay network for connecting private infrastructure across clouds, using WireGuard and a custom zero-trust control plane.
+A zero-trust VPN mesh network built with Go, WireGuard, and multi-tenant architecture for secure cross-cloud connectivity.
 
 ## 🎓 About This Project
 
@@ -18,33 +18,14 @@ This project was built as a **learning exercise and portfolio piece** to demonst
 
 This project showcases the ability to architect, build, and deploy complex distributed systems while demonstrating practical knowledge of the technologies and patterns used in production environments.
 
-## 🏗️ Architecture
-
-```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   AWS Cloud     │    │   GCP Cloud     │    │   On-Premises   │
-│                 │    │                 │    │                 │
-│ ┌─────────────┐ │    │ ┌─────────────┐ │    │ ┌─────────────┐ │
-│ │ MeshGate    │ │    │ │ MeshGate    │ │    │ │ MeshGate    │ │
-│ │ Agent       │◄┼────┼►│ Agent       │◄┼────┼►│ Agent       │ │
-│ └─────────────┘ │    │ └─────────────┘ │    │ └─────────────┘ │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-         │                       │                       │
-         └───────────────────────┼───────────────────────┘
-                                 │
-                    ┌─────────────────┐
-                    │ Control Plane   │
-                    │ (Zero-Trust)    │
-                    └─────────────────┘
-```
-
 ## 🔧 Tech Stack
 
 ### Core Components
-- **Go**: WireGuard config daemon + control plane
+- **Go**: Control plane API server + WireGuard agent
 - **WireGuard**: Fast, modern VPN protocol for mesh networking
-- **Zero-Trust**: Custom control plane with identity-based access control
-- **BoltDB**: Embedded key-value database for node persistence
+- **SQLite**: Embedded database with migrations
+- **JWT**: Authentication and authorization
+- **Prometheus**: Metrics and monitoring
 
 ### Infrastructure & Operations
 - **Terraform**: Multi-cloud setup across AWS + GCP
@@ -113,54 +94,50 @@ go build -o meshgate-agent main.go
 ## 📋 Features
 
 ### 🔐 Zero-Trust Security
-- Identity-based access control
-- Certificate-based authentication
-- Automatic key rotation
-- Policy-based peer authorization
+- Multi-tenant architecture with role-based access
+- JWT-based authentication and authorization
+- Policy-based network access control
+- Audit logging for security compliance
 
 ### 🌐 Multi-Cloud Support
-- AWS VPC integration
+- AWS VPC integration with security groups
 - Google Cloud VPC integration
-- On-premises deployment
-- Hybrid cloud scenarios
+- On-premises deployment support
+- Cross-cloud mesh connectivity
 
-### 🔄 Service Discovery
-- Automatic peer discovery via control plane
-- Health checking and failover
-- Real-time configuration updates
-- Heartbeat monitoring
+### 🔄 Service Discovery & Management
+- Automatic node registration and discovery
+- Real-time health monitoring with heartbeats
+- Dynamic WireGuard configuration distribution
+- Self-healing agent with auto-reconnection
 
 ### 🚀 Infrastructure as Code
-- Terraform for AWS and GCP
-- Automated instance provisioning
-- Security group configuration
+- Terraform for AWS and GCP provisioning
+- Automated security group configuration
 - Multi-cloud deployment patterns
+- Ubuntu 22.04 base images
 
 ## 📁 Project Structure
 
 ```
 meshgate/
 ├── agent/                 # WireGuard mesh agent
-│   └── main.go           # Agent entry point with key management
+│   ├── main.go           # Agent with WireGuard interface management
+│   ├── mesh/             # Mesh networking logic
+│   └── wireguard/        # Platform-specific WireGuard utilities
 ├── control-plane/         # Zero-trust control plane
-│   ├── main.go           # Control plane server with policy enforcement
+│   ├── main.go           # HTTP API server with JWT auth
+│   ├── api/              # API handlers and middleware
+│   ├── database/         # SQLite database with migrations
 │   └── config/           # Configuration files
-│       ├── local.json    # Local development config
-│       └── policy.json   # Access control policies
-├── terraform/             # Infrastructure as Code
-│   ├── aws/              # AWS resources
-│   │   ├── main.tf       # VPC, security groups, EC2 instances
-│   │   ├── variables.tf  # AWS-specific variables
-│   │   ├── outputs.tf    # Output values
-│   │   └── terraform.tfvars # AWS configuration
-│   └── gcp/              # GCP resources
-│       ├── main.tf       # VPC, firewall rules, Compute instances
-│       ├── variables.tf  # GCP-specific variables
-│       ├── outputs.tf    # Output values
-│       └── terraform.tfvars # GCP configuration
-├── go.mod                 # Go module dependencies
-├── go.sum                 # Dependency checksums
-├── meshgate.db           # BoltDB database file
+├── shared/               # Shared models and utilities
+│   ├── models/           # Data models for mesh, policy, topology
+│   ├── crypto/           # Cryptographic utilities
+│   └── utils/            # Common utilities
+├── terraform/            # Infrastructure as Code
+│   ├── aws/              # AWS VPC, security groups, EC2
+│   └── gcp/              # GCP VPC, firewall rules, Compute
+├── go.mod                # Go module dependencies
 └── README.md             # This file
 ```
 
@@ -173,58 +150,68 @@ The agent automatically:
 - Registers with the control plane
 - Fetches peer configurations
 - Applies WireGuard interface settings
-- Sends heartbeat signals
+- Sends heartbeat signals with metrics
 
-Environment variables:
-- `CONTROL_PLANE`: Control plane endpoint (default: http://localhost:8080)
-- `NODE_TOKEN`: Authentication token (default: meshgate-secret)
+Key settings:
+- `control_plane_url`: Control plane API endpoint
+- `tenant_id`: Multi-tenant organization ID
+- `auth_token`: JWT authentication token
+- `interface_name`: WireGuard interface name
+- `heartbeat_interval`: Health check frequency
 
 ### Control Plane Configuration
 
 The control plane provides:
-- Node registration and management
-- Policy-based peer authorization
-- Configuration distribution
-- Health monitoring
+- Multi-tenant user management with JWT auth
+- Node registration and lifecycle management
+- Policy-based network access control
+- Real-time configuration distribution
+- Prometheus metrics and health monitoring
 
-Configuration files:
-- `config/policy.json`: Access control policies
-- `config/local.json`: Local development settings
+### Policy System
 
-### Policy Configuration
-
-```json
-{
-  "<NODE_A_PUBLIC_KEY>": [
-    "<NODE_B_PUBLIC_KEY>",
-    "<NODE_C_PUBLIC_KEY>"
-  ],
-  "<NODE_B_PUBLIC_KEY>": [
-    "<NODE_A_PUBLIC_KEY>"
-  ]
-}
-```
+Advanced policy engine supporting:
+- Access control policies (allow/deny)
+- Routing policies
+- Firewall rules
+- QoS policies
+- Time-based scheduling
+- Audit logging
 
 ## 🔍 API Endpoints
 
 ### Control Plane API
 
-- `POST /register` - Register a new node
-- `GET /config/{id}` - Get WireGuard configuration for a node
-- `POST /heartbeat/{id}` - Update node heartbeat
+**Authentication:**
+- `POST /api/v1/auth/login` - User login
+- `POST /api/v1/auth/register` - User registration
+- `POST /api/v1/auth/tenants` - Create tenant
+
+**Node Management:**
+- `GET /api/v1/nodes` - List nodes
+- `POST /api/v1/nodes` - Create node
+- `GET /api/v1/nodes/{id}/config` - Get WireGuard config
+- `POST /api/v1/nodes/{id}/heartbeat` - Update heartbeat
+
+**Policy Management:**
+- `GET /api/v1/policies` - List policies
+- `PUT /api/v1/policies` - Update policies
+
+**Monitoring:**
+- `GET /metrics` - Prometheus metrics
+- `GET /health` - Health check
 
 ### Example Usage
 
 ```bash
-# Register a new node
-curl -X POST http://localhost:8080/register \
-  -H "Authorization: Bearer meshgate-secret" \
+# Login
+curl -X POST http://localhost:8080/api/v1/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"publicKey": "your-public-key"}'
+  -d '{"email": "admin@example.com", "password": "password"}'
 
-# Get configuration for a node
-curl http://localhost:8080/config/node-id \
-  -H "Authorization: Bearer meshgate-secret"
+# Get node configuration
+curl http://localhost:8080/api/v1/nodes/node-id/config \
+  -H "Authorization: Bearer <jwt-token>"
 ```
 
 ## 🛠️ Development
@@ -248,6 +235,23 @@ go build -o meshgate-cp main.go
 cd control-plane
 go run main.go
 
+# Start agent (in another terminal)
+cd agent
+go run main.go -config config.json
+```
+
+### Current Status
+
+**Production-ready foundation** with:
+- ✅ Complete control plane API with JWT auth
+- ✅ Multi-tenant database with migrations
+- ✅ WireGuard agent with self-healing
+- ✅ Policy engine with audit logging
+- ✅ Prometheus metrics and monitoring
+- ✅ Terraform infrastructure for AWS/GCP
+- ✅ Cross-platform support (Windows/Linux)
+
+Ready for deployment and demonstration of enterprise-level mesh networking capabilities.
 # In another terminal, start agent
 cd agent
 go run main.go
