@@ -11,7 +11,6 @@ require (
 	github.com/gorilla/mux v1.8.1
 	github.com/mattn/go-sqlite3 v1.14.22
 	github.com/prometheus/client_golang v1.22.0
-	go.etcd.io/bbolt v1.3.8
 	golang.org/x/sys v0.33.0
 )
 
