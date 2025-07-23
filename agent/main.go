@@ -22,6 +22,7 @@ import (
 	"golang.zx2c4.com/wireguard/wgctrl"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 
+	"github.com/saintparish4/meshgate/agent/mesh"
 	"github.com/saintparish4/meshgate/agent/wireguard" // Import our WireGuard interface management package
 )
 
@@ -40,6 +41,16 @@ type AgentConfig struct {
 	MTU                  int           `json:"mtu"`
 	EnableAutoReconnect  bool          `json:"enable_auto_reconnect"`
 	MaxReconnectAttempts int           `json:"max_reconnect_attempts"`
+
+	// Enhanced mesh capabilities
+	MaxConcurrentConnections int     `json:"max_concurrent_connections"`
+	EnableNATTraversal       bool    `json:"enable_nat_traversal"`
+	EnableFailover           bool    `json:"enable_failover"`
+	EnableLoadBalancing      bool    `json:"enable_load_balancing"`
+	ConnectionPoolSize       int     `json:"connection_pool_size"`
+	EnableConnectionReuse    bool    `json:"enable_connection_reuse"`
+	MaxRetryAttempts         int     `json:"max_retry_attempts"`
+	RetryBackoffMultiplier   float64 `json:"retry_backoff_multiplier"`
 }
 
 // API Models
@@ -77,7 +88,7 @@ type ConnectionStats struct {
 	Uptime           int64 `json:"uptime"`
 }
 
-// Enhanced Agent with WireGuard interface management
+// Enhanced Agent with WireGuard interface management and mesh capabilities
 type Agent struct {
 	config           *AgentConfig
 	wgClient         *wgctrl.Client
@@ -92,6 +103,13 @@ type Agent struct {
 	lastStats         ConnectionStats
 	reconnectAttempts int
 	isInterfaceUp     bool
+
+	// Enhanced mesh components
+	meshManager    *mesh.MeshManager
+	natTraversal   *mesh.NATTraversal
+	failoverMgr    *mesh.FailoverManager
+	connectionPool *mesh.ConnectionPool
+	loadBalancer   *mesh.LoadBalancer
 }
 
 // Enhanced metrics with more detailed monitoring

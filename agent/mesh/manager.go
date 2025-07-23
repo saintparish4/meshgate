@@ -11,35 +11,35 @@ import (
 
 // NetworkSegment represents a logical network segment in the mesh
 type NetworkSegment struct {
-	ID          string            `json:"id"`
-	Name        string            `json:"name"`
-	CIDR        string            `json:"cidr"`
-	TenantID    string            `json:"tenant_id"`
-	Policies    []string          `json:"policies"`
-	Metadata    map[string]string `json:"metadata"`
-	CreatedAt   time.Time         `json:"created_at"`
-	UpdatedAt   time.Time         `json:"updated_at"`
+	ID        string            `json:"id"`
+	Name      string            `json:"name"`
+	CIDR      string            `json:"cidr"`
+	TenantID  string            `json:"tenant_id"`
+	Policies  []string          `json:"policies"`
+	Metadata  map[string]string `json:"metadata"`
+	CreatedAt time.Time         `json:"created_at"`
+	UpdatedAt time.Time         `json:"updated_at"`
 }
 
 // MeshNode represents a node in the mesh network
 type MeshNode struct {
-	ID              string                 `json:"id"`
-	Name            string                 `json:"name"`
-	TenantID        string                 `json:"tenant_id"`
-	PublicKey       string                 `json:"public_key"`
-	IPAddress       string                 `json:"ip_address"`
-	Endpoint        string                 `json:"endpoint"`
-	Status          NodeStatus             `json:"status"`
-	LastHeartbeat   time.Time              `json:"last_heartbeat"`
-	Capabilities    []string               `json:"capabilities"`
-	Region          string                 `json:"region"`
-	Zone            string                 `json:"zone"`
-	SegmentID       string                 `json:"segment_id"`
-	ConnectionCount int                    `json:"connection_count"`
-	Stats           NodeStats              `json:"stats"`
-	Metadata        map[string]string      `json:"metadata"`
-	CreatedAt       time.Time              `json:"created_at"`
-	UpdatedAt       time.Time              `json:"updated_at"`
+	ID              string            `json:"id"`
+	Name            string            `json:"name"`
+	TenantID        string            `json:"tenant_id"`
+	PublicKey       string            `json:"public_key"`
+	IPAddress       string            `json:"ip_address"`
+	Endpoint        string            `json:"endpoint"`
+	Status          NodeStatus        `json:"status"`
+	LastHeartbeat   time.Time         `json:"last_heartbeat"`
+	Capabilities    []string          `json:"capabilities"`
+	Region          string            `json:"region"`
+	Zone            string            `json:"zone"`
+	SegmentID       string            `json:"segment_id"`
+	ConnectionCount int               `json:"connection_count"`
+	Stats           NodeStats         `json:"stats"`
+	Metadata        map[string]string `json:"metadata"`
+	CreatedAt       time.Time         `json:"created_at"`
+	UpdatedAt       time.Time         `json:"updated_at"`
 }
 
 // NodeStatus represents the status of a mesh node
@@ -55,38 +55,45 @@ const (
 
 // NodeStats holds statistics for a mesh node
 type NodeStats struct {
-	BytesReceived    int64     `json:"bytes_received"`
-	BytesTransmitted int64     `json:"bytes_transmitted"`
-	PacketsReceived  int64     `json:"packets_received"`
-	PacketsTransmitted int64   `json:"packets_transmitted"`
-	ActivePeers      int       `json:"active_peers"`
-	Uptime           int64     `json:"uptime"`
-	LastUpdate       time.Time `json:"last_update"`
+	BytesReceived      int64     `json:"bytes_received"`
+	BytesTransmitted   int64     `json:"bytes_transmitted"`
+	PacketsReceived    int64     `json:"packets_received"`
+	PacketsTransmitted int64     `json:"packets_transmitted"`
+	ActivePeers        int       `json:"active_peers"`
+	Uptime             int64     `json:"uptime"`
+	LastUpdate         time.Time `json:"last_update"`
 }
 
 // MeshConnection represents a connection between two nodes
 type MeshConnection struct {
-	ID            string                 `json:"id"`
-	SourceNodeID  string                 `json:"source_node_id"`
-	TargetNodeID  string                 `json:"target_node_id"`
-	Status        ConnectionStatus       `json:"status"`
-	Quality       ConnectionQuality      `json:"quality"`
-	AllowedIPs    []string              `json:"allowed_ips"`
-	PresharedKey  string                `json:"preshared_key,omitempty"`
-	Metadata      map[string]string     `json:"metadata"`
-	CreatedAt     time.Time             `json:"created_at"`
-	UpdatedAt     time.Time             `json:"updated_at"`
+	ID           string            `json:"id"`
+	SourceNodeID string            `json:"source_node_id"`
+	TargetNodeID string            `json:"target_node_id"`
+	Status       ConnectionStatus  `json:"status"`
+	Quality      ConnectionQuality `json:"quality"`
+	AllowedIPs   []string          `json:"allowed_ips"`
+	PresharedKey string            `json:"preshared_key,omitempty"`
+	Metadata     map[string]string `json:"metadata"`
+	CreatedAt    time.Time         `json:"created_at"`
+	UpdatedAt    time.Time         `json:"updated_at"`
 }
 
 // MeshManagerConfig holds configuration for the mesh manager
 type MeshManagerConfig struct {
-	HeartbeatTimeout    time.Duration `json:"heartbeat_timeout"`
-	TopologyUpdateInterval time.Duration `json:"topology_update_interval"`
-	MaxNodesPerSegment  int           `json:"max_nodes_per_segment"`
-	MaxConnectionsPerNode int         `json:"max_connections_per_node"`
-	EnableAutoSegmentation bool       `json:"enable_auto_segmentation"`
-	EnableLoadBalancing bool          `json:"enable_load_balancing"`
-	DefaultTopologyType TopologyType  `json:"default_topology_type"`
+	HeartbeatTimeout         time.Duration `json:"heartbeat_timeout"`
+	TopologyUpdateInterval   time.Duration `json:"topology_update_interval"`
+	MaxNodesPerSegment       int           `json:"max_nodes_per_segment"`
+	MaxConnectionsPerNode    int           `json:"max_connections_per_node"`
+	MaxConcurrentConnections int           `json:"max_concurrent_connections"`
+	EnableAutoSegmentation   bool          `json:"enable_auto_segmentation"`
+	EnableLoadBalancing      bool          `json:"enable_load_balancing"`
+	EnableFailover           bool          `json:"enable_failover"`
+	EnableNATTraversal       bool          `json:"enable_nat_traversal"`
+	DefaultTopologyType      TopologyType  `json:"default_topology_type"`
+	ConnectionPoolSize       int           `json:"connection_pool_size"`
+	EnableConnectionReuse    bool          `json:"enable_connection_reuse"`
+	MaxRetryAttempts         int           `json:"max_retry_attempts"`
+	RetryBackoffMultiplier   float64       `json:"retry_backoff_multiplier"`
 }
 
 // MeshManager manages the global mesh network state
@@ -100,6 +107,12 @@ type MeshManager struct {
 	mu          sync.RWMutex
 	ctx         context.Context
 	cancel      context.CancelFunc
+
+	// Enhanced components for 100+ concurrent connections
+	natTraversal   *NATTraversal
+	failoverMgr    *FailoverManager
+	connectionPool *ConnectionPool
+	loadBalancer   *LoadBalancer
 }
 
 // MeshCallback is called when mesh events occur
@@ -123,48 +136,156 @@ const (
 func NewMeshManager(config *MeshManagerConfig, logger *slog.Logger) *MeshManager {
 	if config == nil {
 		config = &MeshManagerConfig{
-			HeartbeatTimeout:       3 * time.Minute,
-			TopologyUpdateInterval: 30 * time.Second,
-			MaxNodesPerSegment:     1000,
-			MaxConnectionsPerNode:  20,
-			EnableAutoSegmentation: true,
-			EnableLoadBalancing:    true,
-			DefaultTopologyType:    TopologyHybrid,
+			HeartbeatTimeout:         30 * time.Second,
+			TopologyUpdateInterval:   60 * time.Second,
+			MaxNodesPerSegment:       100,
+			MaxConnectionsPerNode:    50,
+			MaxConcurrentConnections: 200, // Support 100+ concurrent connections
+			EnableAutoSegmentation:   true,
+			EnableLoadBalancing:      true,
+			EnableFailover:           true,
+			EnableNATTraversal:       true,
+			DefaultTopologyType:      TopologyHybrid,
+			ConnectionPoolSize:       200,
+			EnableConnectionReuse:    true,
+			MaxRetryAttempts:         3,
+			RetryBackoffMultiplier:   2.0,
 		}
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 
+	// Create enhanced components
+	natConfig := &NATTraversalConfig{
+		STUNServers: []string{
+			"stun:stun.l.google.com:19302",
+			"stun:stun1.l.google.com:19302",
+		},
+		DiscoveryInterval:  30 * time.Second,
+		KeepAliveInterval:  60 * time.Second,
+		MaxRetries:         3,
+		Timeout:            10 * time.Second,
+		EnableRelay:        true,
+		EnableHolePunching: true,
+	}
+
+	failoverConfig := &FailoverConfig{
+		HealthCheckInterval:    30 * time.Second,
+		FailoverTimeout:        10 * time.Second,
+		RecoveryTimeout:        60 * time.Second,
+		MaxFailoverAttempts:    3,
+		EnableAutoRecovery:     true,
+		LoadBalancingEnabled:   true,
+		MaxConcurrentFailovers: 10,
+		PriorityBasedRouting:   true,
+	}
+
+	poolConfig := &ConnectionPoolConfig{
+		MaxConnections:      config.MaxConcurrentConnections,
+		MinConnections:      10,
+		MaxIdleTime:         300 * time.Second,
+		ConnectionTimeout:   30 * time.Second,
+		EnableReuse:         config.EnableConnectionReuse,
+		MaxReuseCount:       100,
+		HealthCheckInterval: 60 * time.Second,
+	}
+
+	lbConfig := &LoadBalancerConfig{
+		Strategy:                StrategyRoundRobin,
+		HealthCheckInterval:     30 * time.Second,
+		MaxRetries:              3,
+		RetryTimeout:            5 * time.Second,
+		EnableStickySessions:    false,
+		StickySessionTimeout:    300 * time.Second,
+		MaxConnectionsPerNode:   config.MaxConnectionsPerNode,
+		EnableCircuitBreaker:    true,
+		CircuitBreakerThreshold: 5,
+	}
+
 	return &MeshManager{
-		config:      config,
-		logger:      logger,
-		nodes:       make(map[string]*MeshNode),
-		connections: make(map[string]*MeshConnection),
-		segments:    make(map[string]*NetworkSegment),
-		callbacks:   make([]MeshCallback, 0),
-		ctx:         ctx,
-		cancel:      cancel,
+		config:         config,
+		logger:         logger,
+		nodes:          make(map[string]*MeshNode),
+		connections:    make(map[string]*MeshConnection),
+		segments:       make(map[string]*NetworkSegment),
+		callbacks:      make([]MeshCallback, 0),
+		ctx:            ctx,
+		cancel:         cancel,
+		natTraversal:   NewNATTraversal(natConfig, logger),
+		failoverMgr:    NewFailoverManager(failoverConfig, logger),
+		connectionPool: NewConnectionPool(poolConfig, logger),
+		loadBalancer:   NewLoadBalancer(lbConfig, logger),
 	}
 }
 
 // Start begins the mesh management process
 func (mm *MeshManager) Start() error {
-	mm.logger.Info("Starting mesh manager", 
+	mm.logger.Info("Starting mesh manager",
 		"heartbeat_timeout", mm.config.HeartbeatTimeout,
-		"max_nodes_per_segment", mm.config.MaxNodesPerSegment)
+		"max_nodes_per_segment", mm.config.MaxNodesPerSegment,
+		"max_concurrent_connections", mm.config.MaxConcurrentConnections)
+
+	// Start enhanced components
+	if mm.config.EnableNATTraversal {
+		if err := mm.natTraversal.Start(); err != nil {
+			return fmt.Errorf("failed to start NAT traversal: %w", err)
+		}
+	}
+
+	if mm.config.EnableFailover {
+		if err := mm.failoverMgr.Start(); err != nil {
+			return fmt.Errorf("failed to start failover manager: %w", err)
+		}
+	}
+
+	if err := mm.connectionPool.Start(); err != nil {
+		return fmt.Errorf("failed to start connection pool: %w", err)
+	}
+
+	if mm.config.EnableLoadBalancing {
+		if err := mm.loadBalancer.Start(); err != nil {
+			return fmt.Errorf("failed to start load balancer: %w", err)
+		}
+	}
 
 	// Start background processes
 	go mm.heartbeatMonitor()
 	go mm.topologyOptimizer()
 	go mm.statisticsCollector()
 
+	mm.logger.Info("Mesh manager started with enhanced capabilities")
 	return nil
 }
 
 // Stop stops the mesh management process
 func (mm *MeshManager) Stop() error {
 	mm.logger.Info("Stopping mesh manager")
+
+	// Stop enhanced components
+	if mm.config.EnableNATTraversal {
+		if err := mm.natTraversal.Stop(); err != nil {
+			mm.logger.Warn("Failed to stop NAT traversal", "error", err)
+		}
+	}
+
+	if mm.config.EnableFailover {
+		if err := mm.failoverMgr.Stop(); err != nil {
+			mm.logger.Warn("Failed to stop failover manager", "error", err)
+		}
+	}
+
+	if err := mm.connectionPool.Stop(); err != nil {
+		mm.logger.Warn("Failed to stop connection pool", "error", err)
+	}
+
+	if mm.config.EnableLoadBalancing {
+		if err := mm.loadBalancer.Stop(); err != nil {
+			mm.logger.Warn("Failed to stop load balancer", "error", err)
+		}
+	}
+
 	mm.cancel()
+	mm.logger.Info("Mesh manager stopped")
 	return nil
 }
 
@@ -179,7 +300,7 @@ func (mm *MeshManager) RegisterNode(node *MeshNode) error {
 
 	now := time.Now()
 	existing, exists := mm.nodes[node.ID]
-	
+
 	if exists {
 		// Update existing node
 		existing.Name = node.Name
@@ -198,19 +319,19 @@ func (mm *MeshManager) RegisterNode(node *MeshNode) error {
 		node.LastHeartbeat = now
 		node.CreatedAt = now
 		node.UpdatedAt = now
-		
+
 		// Auto-assign to segment if enabled
 		if mm.config.EnableAutoSegmentation {
 			if err := mm.autoAssignSegment(node); err != nil {
-				mm.logger.Warn("Failed to auto-assign segment", 
+				mm.logger.Warn("Failed to auto-assign segment",
 					"node_id", node.ID, "error", err)
 			}
 		}
-		
+
 		mm.nodes[node.ID] = node
 		mm.notifyCallbacks(NodeJoined, node)
-		mm.logger.Info("Registered new node", 
-			"node_id", node.ID, 
+		mm.logger.Info("Registered new node",
+			"node_id", node.ID,
 			"segment_id", node.SegmentID)
 	}
 
@@ -241,8 +362,8 @@ func (mm *MeshManager) UnregisterNode(nodeID string) error {
 
 	delete(mm.nodes, nodeID)
 	mm.notifyCallbacks(NodeLeft, node)
-	mm.logger.Info("Unregistered node", 
-		"node_id", nodeID, 
+	mm.logger.Info("Unregistered node",
+		"node_id", nodeID,
 		"removed_connections", len(connectionsToRemove))
 
 	return nil
@@ -270,7 +391,7 @@ func (mm *MeshManager) UpdateNodeHeartbeat(nodeID string, stats NodeStats) error
 func (mm *MeshManager) GetNode(nodeID string) (*MeshNode, bool) {
 	mm.mu.RLock()
 	defer mm.mu.RUnlock()
-	
+
 	node, exists := mm.nodes[nodeID]
 	if exists {
 		nodeCopy := *node
@@ -324,16 +445,16 @@ func (mm *MeshManager) GetOptimalTopologyForNode(nodeID string) ([]*MeshConnecti
 	// Get all nodes in the same segment
 	candidateNodes := make([]*MeshNode, 0)
 	for _, candidate := range mm.nodes {
-		if candidate.ID != nodeID && 
-		   candidate.SegmentID == node.SegmentID && 
-		   candidate.Status == NodeOnline {
+		if candidate.ID != nodeID &&
+			candidate.SegmentID == node.SegmentID &&
+			candidate.Status == NodeOnline {
 			candidateNodes = append(candidateNodes, candidate)
 		}
 	}
 
 	// Calculate optimal connections based on topology type
 	connections := mm.calculateOptimalConnections(node, candidateNodes)
-	
+
 	return connections, nil
 }
 
@@ -372,15 +493,15 @@ func (mm *MeshManager) CreateConnection(sourceNodeID, targetNodeID string, allow
 	}
 
 	mm.connections[connID] = connection
-	
+
 	// Update connection counts
 	sourceNode.ConnectionCount++
 	targetNode.ConnectionCount++
 
 	mm.notifyCallbacks(ConnectionCreated, connection)
-	mm.logger.Info("Created connection", 
+	mm.logger.Info("Created connection",
 		"connection_id", connID,
-		"source", sourceNodeID, 
+		"source", sourceNodeID,
 		"target", targetNodeID)
 
 	return connection, nil
@@ -429,8 +550,8 @@ func (mm *MeshManager) CreateSegment(segment *NetworkSegment) error {
 	mm.segments[segment.ID] = segment
 
 	mm.notifyCallbacks(SegmentCreated, segment)
-	mm.logger.Info("Created network segment", 
-		"segment_id", segment.ID, 
+	mm.logger.Info("Created network segment",
+		"segment_id", segment.ID,
 		"cidr", segment.CIDR)
 
 	return nil
@@ -440,7 +561,7 @@ func (mm *MeshManager) CreateSegment(segment *NetworkSegment) error {
 func (mm *MeshManager) GetSegment(segmentID string) (*NetworkSegment, bool) {
 	mm.mu.RLock()
 	defer mm.mu.RUnlock()
-	
+
 	segment, exists := mm.segments[segmentID]
 	if exists {
 		segmentCopy := *segment
@@ -510,8 +631,8 @@ func (mm *MeshManager) checkNodeHeartbeats() {
 	staleNodes := make([]*MeshNode, 0)
 
 	for _, node := range mm.nodes {
-		if node.Status == NodeOnline && 
-		   now.Sub(node.LastHeartbeat) > mm.config.HeartbeatTimeout {
+		if node.Status == NodeOnline &&
+			now.Sub(node.LastHeartbeat) > mm.config.HeartbeatTimeout {
 			node.Status = NodeOffline
 			node.UpdatedAt = now
 			staleNodes = append(staleNodes, node)
@@ -520,8 +641,8 @@ func (mm *MeshManager) checkNodeHeartbeats() {
 
 	for _, node := range staleNodes {
 		mm.notifyCallbacks(NodeUpdated, node)
-		mm.logger.Warn("Node marked offline due to stale heartbeat", 
-			"node_id", node.ID, 
+		mm.logger.Warn("Node marked offline due to stale heartbeat",
+			"node_id", node.ID,
 			"last_heartbeat", node.LastHeartbeat)
 	}
 }
@@ -538,7 +659,7 @@ func (mm *MeshManager) optimizeTopology() {
 
 	for _, segment := range segments {
 		if err := mm.optimizeSegmentTopology(segment.ID); err != nil {
-			mm.logger.Error("Failed to optimize segment topology", 
+			mm.logger.Error("Failed to optimize segment topology",
 				"segment_id", segment.ID, "error", err)
 		}
 	}
@@ -551,8 +672,8 @@ func (mm *MeshManager) optimizeSegmentTopology(segmentID string) error {
 		return nil // No optimization needed for single node or empty segment
 	}
 
-	mm.logger.Debug("Optimizing segment topology", 
-		"segment_id", segmentID, 
+	mm.logger.Debug("Optimizing segment topology",
+		"segment_id", segmentID,
 		"node_count", len(nodes))
 
 	// For each node, calculate optimal connections
@@ -563,7 +684,7 @@ func (mm *MeshManager) optimizeSegmentTopology(segmentID string) error {
 
 		optimalConnections, err := mm.GetOptimalTopologyForNode(node.ID)
 		if err != nil {
-			mm.logger.Error("Failed to calculate optimal topology", 
+			mm.logger.Error("Failed to calculate optimal topology",
 				"node_id", node.ID, "error", err)
 			continue
 		}
@@ -601,7 +722,7 @@ func (mm *MeshManager) reconcileNodeConnections(nodeID string, optimal []*MeshCo
 	for targetID, conn := range currentMap {
 		if _, exists := optimalMap[targetID]; !exists {
 			if err := mm.RemoveConnection(conn.ID); err != nil {
-				mm.logger.Error("Failed to remove connection", 
+				mm.logger.Error("Failed to remove connection",
 					"connection_id", conn.ID, "error", err)
 			}
 		}
@@ -611,7 +732,7 @@ func (mm *MeshManager) reconcileNodeConnections(nodeID string, optimal []*MeshCo
 	for targetID, conn := range optimalMap {
 		if _, exists := currentMap[targetID]; !exists {
 			if _, err := mm.CreateConnection(nodeID, targetID, conn.AllowedIPs); err != nil {
-				mm.logger.Error("Failed to create optimal connection", 
+				mm.logger.Error("Failed to create optimal connection",
 					"source", nodeID, "target", targetID, "error", err)
 			}
 		}
@@ -621,7 +742,7 @@ func (mm *MeshManager) reconcileNodeConnections(nodeID string, optimal []*MeshCo
 // calculateOptimalConnections calculates optimal connections for a node
 func (mm *MeshManager) calculateOptimalConnections(node *MeshNode, candidates []*MeshNode) []*MeshConnection {
 	connections := make([]*MeshConnection, 0)
-	
+
 	if len(candidates) == 0 {
 		return connections
 	}
@@ -650,7 +771,7 @@ func (mm *MeshManager) calculateOptimalConnections(node *MeshNode, candidates []
 // calculateFullMeshConnections creates full mesh connections
 func (mm *MeshManager) calculateFullMeshConnections(node *MeshNode, candidates []*MeshNode) []*MeshConnection {
 	connections := make([]*MeshConnection, 0)
-	
+
 	for _, candidate := range candidates {
 		if candidate.Status == NodeOnline {
 			conn := &MeshConnection{
@@ -670,7 +791,7 @@ func (mm *MeshManager) calculateFullMeshConnections(node *MeshNode, candidates [
 // calculateHubConnections creates hub-based connections
 func (mm *MeshManager) calculateHubConnections(node *MeshNode, candidates []*MeshNode) []*MeshConnection {
 	connections := make([]*MeshConnection, 0)
-	
+
 	// Simple hub selection based on node capabilities or first available
 	var hub *MeshNode
 	for _, candidate := range candidates {
@@ -705,13 +826,13 @@ func (mm *MeshManager) calculateHubConnections(node *MeshNode, candidates []*Mes
 // calculateHybridConnections creates hybrid topology connections
 func (mm *MeshManager) calculateHybridConnections(node *MeshNode, candidates []*MeshNode) []*MeshConnection {
 	connections := make([]*MeshConnection, 0)
-	
+
 	// Score and sort candidates
 	type scoredCandidate struct {
 		node  *MeshNode
 		score float64
 	}
-	
+
 	scored := make([]scoredCandidate, 0)
 	for _, candidate := range candidates {
 		if candidate.Status == NodeOnline {
@@ -848,7 +969,7 @@ func (mm *MeshManager) collectStatistics() {
 		}
 	}
 
-	mm.logger.Info("Mesh statistics", 
+	mm.logger.Info("Mesh statistics",
 		"total_nodes", totalNodes,
 		"online_nodes", onlineNodes,
 		"total_connections", totalConnections,
@@ -868,6 +989,31 @@ func (mm *MeshManager) notifyCallbacks(event MeshEvent, data interface{}) {
 			cb(event, data)
 		}(callback)
 	}
+}
+
+// GetConfig returns the mesh manager configuration
+func (mm *MeshManager) GetConfig() *MeshManagerConfig {
+	return mm.config
+}
+
+// GetNATTraversal returns the NAT traversal component
+func (mm *MeshManager) GetNATTraversal() *NATTraversal {
+	return mm.natTraversal
+}
+
+// GetFailoverManager returns the failover manager component
+func (mm *MeshManager) GetFailoverManager() *FailoverManager {
+	return mm.failoverMgr
+}
+
+// GetConnectionPool returns the connection pool component
+func (mm *MeshManager) GetConnectionPool() *ConnectionPool {
+	return mm.connectionPool
+}
+
+// GetLoadBalancer returns the load balancer component
+func (mm *MeshManager) GetLoadBalancer() *LoadBalancer {
+	return mm.loadBalancer
 }
 
 // GetStats returns comprehensive mesh statistics
@@ -912,17 +1058,17 @@ func (mm *MeshManager) GetStats() map[string]interface{} {
 	}
 
 	return map[string]interface{}{
-		"total_nodes":          totalNodes,
-		"online_nodes":         onlineNodes,
-		"total_connections":    totalConnections,
-		"active_connections":   activeConnections,
-		"total_segments":       totalSegments,
-		"avg_connections":      avgConnections,
-		"node_status_counts":   statusCounts,
-		"conn_status_counts":   connStatusCounts,
-		"auto_segmentation":    mm.config.EnableAutoSegmentation,
-		"load_balancing":       mm.config.EnableLoadBalancing,
-		"default_topology":     mm.config.DefaultTopologyType.String(),
+		"total_nodes":        totalNodes,
+		"online_nodes":       onlineNodes,
+		"total_connections":  totalConnections,
+		"active_connections": activeConnections,
+		"total_segments":     totalSegments,
+		"avg_connections":    avgConnections,
+		"node_status_counts": statusCounts,
+		"conn_status_counts": connStatusCounts,
+		"auto_segmentation":  mm.config.EnableAutoSegmentation,
+		"load_balancing":     mm.config.EnableLoadBalancing,
+		"default_topology":   mm.config.DefaultTopologyType.String(),
 	}
 }
 
